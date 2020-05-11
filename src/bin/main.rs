@@ -16,7 +16,7 @@ fn main() -> Result<(), Error> {
     }
     println!("{} is a galago_btree!", input);
 
-    let footer = btree::read_footer(&path)?;
+    let footer = btree::read_info(&path)?;
     println!("Footer: {:?}", footer);
 
     Ok(())

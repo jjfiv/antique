@@ -3,6 +3,7 @@ use crate::HashMap;
 use memmap::{Mmap, MmapOptions};
 use serde_json::{Map as Dict, Value};
 use std::fs::File;
+use std::sync::Arc;
 use std::{
     convert::TryInto,
     io::prelude::*,
@@ -25,7 +26,9 @@ const FOOTER_SIZE: usize = 8 + 8 + 4 + 8;
 
 /// The bottom of a Galago file will have this data:
 #[derive(Debug, Clone)]
-pub struct Footer {
+pub struct TreeReader {
+    mmap: Arc<Mmap>,
+    location: TreeLocation,
     vocabulary_offset: u64,
     manifest_offset: u64,
     block_size: u32,
@@ -41,6 +44,7 @@ pub struct Manifest {
     block_size: usize,
     empty_index_file: bool,
     cache_group_size: Option<usize>,
+    /// I love Serde so much; this was "filename" in practice but should be camel or snake-case.
     #[serde(alias = "filename")]
     file_name: String,
     reader_class: String,
@@ -51,6 +55,7 @@ pub struct Manifest {
     extra: HashMap<String, Value>,
 }
 
+#[derive(Debug, Clone)]
 enum TreeLocation {
     SingleFile(PathBuf),
     Split { keys: PathBuf },
@@ -110,7 +115,7 @@ fn read_u32(input: &[u8]) -> Result<(u32, &[u8]), Error> {
 }
 
 /// Read footer:
-pub fn read_footer(path: &Path) -> Result<Footer, Error> {
+pub fn read_info(path: &Path) -> Result<TreeReader, Error> {
     let location = TreeLocation::new(path)?;
 
     // Use Memory-Mapped I/O:
@@ -135,7 +140,9 @@ pub fn read_footer(path: &Path) -> Result<Footer, Error> {
     let manifest = serde_json::from_slice(&mmap[(manifest_offset as usize)..footer_start])
         .map_err(|details| Error::BadManifest(details))?;
 
-    Ok(Footer {
+    Ok(TreeReader {
+        mmap: Arc::new(mmap),
+        location,
         vocabulary_offset,
         manifest_offset,
         block_size,
@@ -144,12 +151,143 @@ pub fn read_footer(path: &Path) -> Result<Footer, Error> {
     })
 }
 
+#[derive(Ord, PartialOrd, Eq, PartialEq)]
+pub struct Bytes<'src> {
+    data: &'src [u8],
+}
+
+/// VocabularyReader.IndexBlockInfo in Galago Source
+pub struct VocabularySlot<'src> {
+    slot_id: u32,
+    first_key: Bytes<'src>,
+    next_slot_key: Bytes<'src>,
+    begin: u64,
+    /// Note we store end rather than length.
+    end: u64,
+    header_length: u32,
+}
+
+fn read_bytes<'src>(input: &'src [u8], amt: usize) -> Result<(Bytes<'src>, &'src [u8]), Error> {
+    let (data, rest) = input.split_at(amt);
+    Ok((Bytes { data }, rest))
+}
+
+pub struct SliceInputStream<'src> {
+    data: &'src [u8],
+    // TODO: keeping this separate in case we need to rewind...
+    position: usize,
+}
+
+impl<'src> SliceInputStream<'src> {
+    fn new(data: &'src [u8]) -> Self {
+        Self { data, position: 0 }
+    }
+    fn eof(&self) -> bool {
+        self.position >= self.data.len()
+    }
+    #[inline]
+    fn consume(&mut self, n: usize) -> Result<&'src [u8], ()> {
+        let end = self.position + 8;
+        if end >= self.data.len() {
+            return Err(());
+        }
+        let found = &self.data[self.position..end];
+        self.position = end;
+        Ok(found)
+    }
+    pub fn read_vbyte(&mut self) -> Result<u64, ()> {
+        let mut result: u64 = 0;
+        let mut bit_p: u8 = 0;
+        while self.position < self.data.len() {
+            // read_byte:
+            let byte = self.data[self.position] as u64;
+            self.position += 1;
+
+            // if highest bit set we're done!
+            if byte & 0x80 > 0 {
+                result |= (byte & 0x7f) << bit_p;
+                return Ok(result);
+            }
+            result |= byte << bit_p;
+            bit_p += 7;
+        }
+        Err(())
+    }
+    pub fn read_bytes(&mut self, n: usize) -> Result<Bytes<'src>, ()> {
+        Ok(Bytes {
+            data: self.consume(n)?,
+        })
+    }
+    pub fn read_u64(&mut self) -> Result<u64, ()> {
+        let exact = self.consume(8)?;
+        Ok(u64::from_be_bytes(exact.try_into().unwrap()))
+    }
+    pub fn read_u32(&mut self) -> Result<u32, ()> {
+        let exact = self.consume(8)?;
+        Ok(u32::from_be_bytes(exact.try_into().unwrap()))
+    }
+}
+
+pub struct Vocabulary {}
+
+pub fn read_vocabulary(info: &TreeReader) -> Result<Vocabulary, ()> {
+    let vocab_end = info.manifest_offset as usize;
+    let vocab_start = info.vocabulary_offset as usize;
+
+    let mmap = info.mmap.clone();
+    let mut vocab = SliceInputStream::new(&mmap[vocab_start..vocab_end]);
+
+    let final_key_length = vocab.read_u32()? as usize;
+    let final_key = vocab.read_bytes(final_key_length)?;
+
+    while !vocab.eof() {}
+
+    Ok(todo!())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    // Galago's VByte compression (trevor, jfoley)
+    fn compress_u32(i: u32, out: &mut Vec<u8>) {
+        if i < 1 << 7 {
+            out.push((i | 0x80) as u8);
+        } else if i < 1 << 14 {
+            out.push((i & 0x7f) as u8);
+            out.push(((i >> 7) | 0x80) as u8);
+        } else if i < 1 << 21 {
+            out.push((i & 0x7f) as u8);
+            out.push(((i >> 7) & 0x7f) as u8);
+            out.push(((i >> 14) | 0x80) as u8);
+        } else if i < 1 << 28 {
+            out.push((i & 0x7f) as u8);
+            out.push(((i >> 7) & 0x7f) as u8);
+            out.push(((i >> 14) & 0x7f) as u8);
+            out.push(((i >> 21) | 0x80) as u8);
+        } else {
+            out.push((i & 0x7f) as u8);
+            out.push(((i >> 7) & 0x7f) as u8);
+            out.push(((i >> 14) & 0x7f) as u8);
+            out.push(((i >> 21) & 0x7f) as u8);
+            out.push(((i >> 28) | 0x80) as u8);
+        }
+    }
     #[test]
-    fn test_footer_size() {
-        assert_eq!(FOOTER_SIZE, std::mem::size_of::<Footer>());
+    fn test_vbytes() {
+        let expected = &[
+            0, 0xf, 0xef, 0xeef, 0xbeef, 0xdbeef, 0xadbeef, 0xeadbeef, 0xdeadbeef,
+        ];
+        let mut buf = Vec::new();
+        for x in expected {
+            compress_u32(*x, &mut buf)
+        }
+
+        let mut rdr = SliceInputStream::new(&buf[0..]);
+        for x in expected {
+            let x = *x as u64;
+            assert_eq!(x, rdr.read_vbyte().unwrap());
+        }
+        assert_eq!(Err(()), rdr.read_vbyte());
     }
 }
