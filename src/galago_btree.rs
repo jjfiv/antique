@@ -313,4 +313,38 @@ mod tests {
         assert_eq!(0x11223344, rdr.read_u32().unwrap());
         assert!(rdr.eof());
     }
+
+    fn read_path(input: &str) -> Result<bool, Error> {
+        let path = Path::new(&input);
+
+        if !file_matches(&path)? {
+            println!("{} is NOT a galago btree!", input);
+            return Ok(false);
+        }
+        println!("{} is a galago_btree!", input);
+
+        let footer = read_info(&path)?;
+        println!("Footer: {:?}", footer);
+
+        let vocab = read_vocabulary(&footer)?;
+        for block in vocab.blocks {
+            println!("block: {:?} .. {:?}", block.first_key, block.next_block_key);
+        }
+        Ok(true)
+    }
+    #[test]
+    fn test_index_parts() {
+        assert_eq!(true, read_path("data/index.galago/names").unwrap());
+        assert_eq!(true, read_path("data/index.galago/names.reverse").unwrap());
+        assert_eq!(true, read_path("data/index.galago/postings").unwrap());
+        assert_eq!(
+            true,
+            read_path("data/index.galago/postings.krovetz").unwrap()
+        );
+        assert_eq!(true, read_path("data/index.galago/corpus").unwrap());
+        assert_eq!(
+            true,
+            read_path("data/index.galago/corpus/split.keys").unwrap()
+        );
+    }
 }
