@@ -16,13 +16,15 @@ fn main() -> Result<(), Error> {
     }
     println!("{} is a galago_btree!", input);
 
-    let footer = btree::read_info(&path)?;
-    println!("Footer: {:?}", footer);
+    let reader = btree::read_info(&path)?;
+    println!("Location: {:?}", reader.location);
+    println!("Manifest: {:?}", reader.manifest);
 
-    let vocab = btree::read_vocabulary(&footer)?;
-    for block in vocab.blocks {
-        println!("block: {:?} .. {:?}", block.first_key, block.next_block_key);
+    for block in &reader.vocabulary.blocks {
+        println!("block: {:?} ..", block.first_key);
     }
+
+    println!("the: {:?}", reader.find_str("the")?);
 
     Ok(())
 }

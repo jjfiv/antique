@@ -1,15 +1,37 @@
 use crate::Error;
 use std::convert::TryInto;
 use std::fmt;
-use std::str;
+use std::{cmp::Ordering, str};
 
-#[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
-pub struct Bytes<'src> {
-    data: &'src [u8],
+#[derive(Clone)]
+pub struct Bytes {
+    pub data: Box<[u8]>,
 }
-impl fmt::Debug for Bytes<'_> {
+impl Bytes {
+    /// I think this is the only way to get a boxed slice...
+    /// Someday, bumpalo these?
+    pub fn from_slice(input: &[u8]) -> Self {
+        let mut tmp = Vec::new();
+        tmp.reserve_exact(input.len());
+        tmp.extend_from_slice(input);
+        Self {
+            data: tmp.into_boxed_slice(),
+        }
+    }
+
+    /// Ditch the Box for reading.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.data.as_ref()
+    }
+
+    /// Compare to another byte slice somewhere else.
+    pub fn cmp(&self, rhs: &[u8]) -> Ordering {
+        self.data.as_ref().cmp(rhs)
+    }
+}
+impl fmt::Debug for Bytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Ok(readable) = str::from_utf8(self.data) {
+        if let Ok(readable) = str::from_utf8(&self.data) {
             write!(f, "{}", readable)
         } else {
             write!(f, "{:?}", &self.data)
@@ -57,10 +79,8 @@ impl<'src> SliceInputStream<'src> {
         }
         Err(Error::InternalSizeErr)
     }
-    pub fn read_bytes(&mut self, n: usize) -> Result<Bytes<'src>, Error> {
-        Ok(Bytes {
-            data: self.consume(n)?,
-        })
+    pub fn read_bytes(&mut self, n: usize) -> Result<&'src [u8], Error> {
+        Ok(self.consume(n)?)
     }
     pub fn read_u64(&mut self) -> Result<u64, Error> {
         let exact = self.consume(8)?;
