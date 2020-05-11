@@ -13,9 +13,9 @@ use std::io;
 pub enum Error {
     PathNotOK,
     IO(io::Error),
-    SliceErr,
     BadGalagoMagic(u64),
     BadManifest(serde_json::Error),
+    InternalSizeErr,
 }
 
 impl From<io::Error> for Error {

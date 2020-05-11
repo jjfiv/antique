@@ -19,5 +19,10 @@ fn main() -> Result<(), Error> {
     let footer = btree::read_info(&path)?;
     println!("Footer: {:?}", footer);
 
+    let vocab = btree::read_vocabulary(&footer)?;
+    for block in vocab.blocks {
+        println!("block: {:?} .. {:?}", block.first_key, block.next_block_key);
+    }
+
     Ok(())
 }

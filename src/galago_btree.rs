@@ -1,13 +1,14 @@
 use crate::Error;
 use crate::HashMap;
 use memmap::{Mmap, MmapOptions};
-use serde_json::{Map as Dict, Value};
+use serde_json::Value;
 use std::fs::File;
 use std::sync::Arc;
 use std::{
     convert::TryInto,
-    io::prelude::*,
+    fmt,
     path::{Path, PathBuf},
+    str,
 };
 
 // Notes on the format:
@@ -92,26 +93,10 @@ pub fn file_matches(path: &Path) -> Result<bool, Error> {
     let opts = MmapOptions::new();
     let mmap: Mmap = unsafe { opts.map(&file)? };
     let file_length = mmap.len();
-
+    let mut reader = SliceInputStream::new(&mmap[file_length - 8..]);
     // Last u64 in file should be:
-    let maybe_magic = u64::from_be_bytes(
-        (&mmap[file_length - 8..file_length])
-            .try_into()
-            .map_err(|_| Error::SliceErr)?,
-    );
+    let maybe_magic = reader.read_u64()?;
     Ok(maybe_magic == MAGIC_NUMBER)
-}
-
-fn read_u64(input: &[u8]) -> Result<(u64, &[u8]), Error> {
-    let (long_bytes, rest) = input.split_at(8);
-    let long = u64::from_be_bytes(long_bytes.try_into().map_err(|_| Error::SliceErr)?);
-    Ok((long, rest))
-}
-
-fn read_u32(input: &[u8]) -> Result<(u32, &[u8]), Error> {
-    let (long_bytes, rest) = input.split_at(4);
-    let long = u32::from_be_bytes(long_bytes.try_into().map_err(|_| Error::SliceErr)?);
-    Ok((long, rest))
 }
 
 /// Read footer:
@@ -125,13 +110,13 @@ pub fn read_info(path: &Path) -> Result<TreeReader, Error> {
     let file_length = mmap.len();
 
     let footer_start = file_length - FOOTER_SIZE;
-    let rest = &mmap[footer_start..];
+    let mut reader = SliceInputStream::new(&mmap[footer_start..]);
 
-    let (vocabulary_offset, rest) = read_u64(rest)?;
-    let (manifest_offset, rest) = read_u64(rest)?;
-    let (block_size, rest) = read_u32(rest)?;
-    let (magic_number, rest) = read_u64(rest)?;
-    debug_assert_eq!(0, rest.len());
+    let vocabulary_offset = reader.read_u64()?;
+    let manifest_offset = reader.read_u64()?;
+    let block_size = reader.read_u32()?;
+    let magic_number = reader.read_u64()?;
+    debug_assert!(reader.eof());
 
     if magic_number != MAGIC_NUMBER {
         return Err(Error::BadGalagoMagic(magic_number));
@@ -151,25 +136,18 @@ pub fn read_info(path: &Path) -> Result<TreeReader, Error> {
     })
 }
 
-#[derive(Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
 pub struct Bytes<'src> {
     data: &'src [u8],
 }
-
-/// VocabularyReader.IndexBlockInfo in Galago Source
-pub struct VocabularySlot<'src> {
-    slot_id: u32,
-    first_key: Bytes<'src>,
-    next_slot_key: Bytes<'src>,
-    begin: u64,
-    /// Note we store end rather than length.
-    end: u64,
-    header_length: u32,
-}
-
-fn read_bytes<'src>(input: &'src [u8], amt: usize) -> Result<(Bytes<'src>, &'src [u8]), Error> {
-    let (data, rest) = input.split_at(amt);
-    Ok((Bytes { data }, rest))
+impl fmt::Debug for Bytes<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Ok(readable) = str::from_utf8(self.data) {
+            write!(f, "{}", readable)
+        } else {
+            write!(f, "{:?}", &self.data)
+        }
+    }
 }
 
 pub struct SliceInputStream<'src> {
@@ -186,16 +164,16 @@ impl<'src> SliceInputStream<'src> {
         self.position >= self.data.len()
     }
     #[inline]
-    fn consume(&mut self, n: usize) -> Result<&'src [u8], ()> {
-        let end = self.position + 8;
-        if end >= self.data.len() {
-            return Err(());
+    fn consume(&mut self, n: usize) -> Result<&'src [u8], Error> {
+        let end = self.position + n;
+        if end > self.data.len() {
+            return Err(Error::InternalSizeErr);
         }
         let found = &self.data[self.position..end];
         self.position = end;
         Ok(found)
     }
-    pub fn read_vbyte(&mut self) -> Result<u64, ()> {
+    pub fn read_vbyte(&mut self) -> Result<u64, Error> {
         let mut result: u64 = 0;
         let mut bit_p: u8 = 0;
         while self.position < self.data.len() {
@@ -211,38 +189,75 @@ impl<'src> SliceInputStream<'src> {
             result |= byte << bit_p;
             bit_p += 7;
         }
-        Err(())
+        Err(Error::InternalSizeErr)
     }
-    pub fn read_bytes(&mut self, n: usize) -> Result<Bytes<'src>, ()> {
+    pub fn read_bytes(&mut self, n: usize) -> Result<Bytes<'src>, Error> {
         Ok(Bytes {
             data: self.consume(n)?,
         })
     }
-    pub fn read_u64(&mut self) -> Result<u64, ()> {
+    pub fn read_u64(&mut self) -> Result<u64, Error> {
         let exact = self.consume(8)?;
         Ok(u64::from_be_bytes(exact.try_into().unwrap()))
     }
-    pub fn read_u32(&mut self) -> Result<u32, ()> {
-        let exact = self.consume(8)?;
+    pub fn read_u32(&mut self) -> Result<u32, Error> {
+        let exact = self.consume(4)?;
         Ok(u32::from_be_bytes(exact.try_into().unwrap()))
     }
 }
 
-pub struct Vocabulary {}
+/// VocabularyReader.IndexBlockInfo in Galago Source
+pub struct VocabularyBlock<'src> {
+    pub first_key: Bytes<'src>,
+    pub next_block_key: Bytes<'src>,
+    pub begin: usize,
+    /// Note we store end rather than length.
+    pub end: usize,
+    pub header_length: u32,
+}
+pub struct Vocabulary<'src> {
+    pub region: SliceInputStream<'src>,
+    pub blocks: Vec<VocabularyBlock<'src>>,
+}
 
-pub fn read_vocabulary(info: &TreeReader) -> Result<Vocabulary, ()> {
+pub fn read_vocabulary(info: &TreeReader) -> Result<Vocabulary, Error> {
     let vocab_end = info.manifest_offset as usize;
     let vocab_start = info.vocabulary_offset as usize;
+    let value_data_end = vocab_start;
 
-    let mmap = info.mmap.clone();
-    let mut vocab = SliceInputStream::new(&mmap[vocab_start..vocab_end]);
+    let mut vocab = SliceInputStream::new(&info.mmap[vocab_start..vocab_end]);
 
     let final_key_length = vocab.read_u32()? as usize;
     let final_key = vocab.read_bytes(final_key_length)?;
 
-    while !vocab.eof() {}
+    let mut blocks: Vec<VocabularyBlock> = Vec::new();
 
-    Ok(todo!())
+    while !vocab.eof() {
+        let length = vocab.read_vbyte()? as usize;
+        let key = vocab.read_bytes(length)?;
+        let offset = vocab.read_vbyte()? as usize;
+        let header_length = vocab.read_vbyte()? as u32;
+
+        // Found a new block; correct end and next_block_key of previous block, if any.
+        if let Some(prev) = blocks.last_mut() {
+            prev.end = offset;
+            prev.next_block_key = key;
+        }
+
+        blocks.push(VocabularyBlock {
+            begin: offset,
+            header_length,
+            first_key: key,
+            // Rather than patch these after the loop for the final block, just start all blocks with the end values.
+            end: value_data_end,
+            next_block_key: final_key,
+        })
+    }
+
+    Ok(Vocabulary {
+        region: vocab,
+        blocks,
+    })
 }
 
 #[cfg(test)]
@@ -288,6 +303,14 @@ mod tests {
             let x = *x as u64;
             assert_eq!(x, rdr.read_vbyte().unwrap());
         }
-        assert_eq!(Err(()), rdr.read_vbyte());
+        assert!(rdr.eof());
+    }
+
+    #[test]
+    fn test_read_u32() {
+        let expected = &[0x11, 0x22, 0x33, 0x44];
+        let mut rdr = SliceInputStream::new(&expected[0..]);
+        assert_eq!(0x11223344, rdr.read_u32().unwrap());
+        assert!(rdr.eof());
     }
 }
