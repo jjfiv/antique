@@ -1,4 +1,5 @@
 pub mod galago_btree;
+pub mod galago_postings;
 pub mod io_helper;
 
 #[macro_use]

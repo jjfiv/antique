@@ -48,11 +48,14 @@ impl<'src> SliceInputStream<'src> {
     pub fn new(data: &'src [u8]) -> Self {
         Self { data, position: 0 }
     }
+    pub fn tell(&self) -> usize {
+        self.position
+    }
     pub fn eof(&self) -> bool {
         self.position >= self.data.len()
     }
     #[inline]
-    fn consume(&mut self, n: usize) -> Result<&'src [u8], Error> {
+    pub fn consume(&mut self, n: usize) -> Result<&'src [u8], Error> {
         let end = self.position + n;
         if end > self.data.len() {
             return Err(Error::InternalSizeErr);

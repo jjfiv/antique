@@ -38,18 +38,18 @@ pub struct TreeReader {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
-    max_key_size: usize,
-    block_count: u64,
-    block_size: usize,
-    empty_index_file: bool,
+    pub max_key_size: usize,
+    pub block_count: u64,
+    pub block_size: usize,
+    pub empty_index_file: bool,
     cache_group_size: Option<usize>,
     /// I love Serde so much; this was "filename" in practice but should be camel or snake-case.
     #[serde(alias = "filename")]
     file_name: String,
-    reader_class: String,
+    pub reader_class: String,
     writer_class: Option<String>,
     merger_class: Option<String>,
-    key_count: u64,
+    pub key_count: u64,
     #[serde(flatten)]
     extra: HashMap<String, Value>,
 }
@@ -201,9 +201,9 @@ impl TreeReader {
 
 #[derive(Debug, Clone)]
 pub struct ValueEntry {
-    source: Arc<Mmap>,
-    start: usize,
-    end: usize,
+    pub(crate) source: Arc<Mmap>,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 impl VocabularyBlock {
