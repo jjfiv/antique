@@ -16,6 +16,13 @@ pub enum Error {
     BadGalagoMagic(u64),
     BadManifest(serde_json::Error),
     InternalSizeErr,
+    Context(String, Box<Error>)
+}
+
+impl Error {
+    pub fn with_context<S>(self, msg: S) -> Error where S: Into<String> {
+        Error::Context(msg.into(), Box::new(self))
+    }
 }
 
 impl From<io::Error> for Error {

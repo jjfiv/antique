@@ -154,8 +154,8 @@ pub struct PositionsPostingsIter<'p> {
     current_document: u64,
     current_count: u32,
     positions_buffer: Vec<u32>,
-    extents_loaded: bool,
-    extents_byte_size: usize,
+    positions_loaded: bool,
+    positions_byte_size: usize,
 }
 
 const HAS_SKIPS: u8 = 0b1;
@@ -230,19 +230,22 @@ impl PositionsPostings {
         } else {
             None
         };
-        Ok(PositionsPostingsIter {
+        let mut iter = PositionsPostingsIter {
             postings,
             skips,
             documents: postings.source.substream(postings.documents),
             counts: postings.source.substream(postings.counts),
             positions: postings.source.substream(postings.positions),
-            extents_loaded: false,
-            document_index: 0,
-            extents_byte_size: 0,
+            positions_byte_size: 0,
             current_count: 0,
             current_document: 0,
             positions_buffer: Vec::new(), 
-        })
+            // These two values are basically invalid; but tricks to init correctly...
+            positions_loaded: true,
+            document_index: 0,
+        };
+        iter.load_next_posting()?;
+        Ok(iter)
     }
 }
 
@@ -299,7 +302,7 @@ impl<'p> PositionsPostingsIter<'p> {
         self.current_document == std::u64::MAX
     }
     fn load_next_posting(&mut self) -> Result<(), Error> {
-        if self.document_index > self.postings.document_count {
+        if self.document_index >= self.postings.document_count {
             // Free memory:
             self.positions_buffer.clear();
             self.positions_buffer.shrink_to_fit();
@@ -309,11 +312,11 @@ impl<'p> PositionsPostingsIter<'p> {
             return Ok(());
         }
 
-        if !self.extents_loaded {
+        if !self.positions_loaded {
             if self.current_positions_has_length() {
-                let _ = self.positions.consume(self.extents_byte_size)?;
+                let _ = self.positions.consume(self.positions_byte_size)?;
             } else {
-                // skip extents, the hard way.
+                // skip positions, the hard way.
                 for _ in 0..self.current_count {
                     let _ = self.positions.read_vbyte()?;
                 }
@@ -326,13 +329,13 @@ impl<'p> PositionsPostingsIter<'p> {
 
         // prepare the array of positions:
         self.positions_buffer.clear();
-        self.extents_loaded = false;
+        self.positions_loaded = false;
 
         if self.current_positions_has_length() {
             // lazy-load, since we can.
-            self.extents_byte_size = self.positions.read_vbyte()? as usize;
+            self.positions_byte_size = self.positions.read_vbyte()? as usize;
         } else {
-            self.load_extents()?;
+            self.load_positions()?;
         }
 
         Ok(())
@@ -359,16 +362,16 @@ impl<'p> PositionsPostingsIter<'p> {
         }
 
         let needs_sync = if let Some(skips) = self.skips.as_mut() {
-            skips.sync_to(self.current_document)?;
+            skips.sync_to(self.current_document).map_err(|e| e.with_context("skips.sync_to"))?;
 
             // Can we use our skips?
             if document > skips.next_document {
                 // Ditch extent state.
-                self.extents_loaded = true;
-                self.extents_byte_size = 0;
+                self.positions_loaded = true;
+                self.positions_byte_size = 0;
 
                 while skips.read < skips.config.total && document > skips.next_document {
-                    self.current_document = skips.skip_once()?;
+                    self.current_document = skips.skip_once().map_err(|e| e.with_context("skips.skip_once"))?;
                 }
                 true
             } else {
@@ -378,18 +381,25 @@ impl<'p> PositionsPostingsIter<'p> {
             false
         };
         if needs_sync {
-            self.reposition_main_streams()?;
+            self.reposition_main_streams().map_err(|e| e.with_context("reposition_main_streams"))?;
         }
         // Skips tapped out or never used; linear search from here:
-        while document > self.current_document && self.document_index <= self.postings.document_count {
+        while document > self.current_document && self.document_index < self.postings.document_count {
             self.document_index += 1;
-            self.load_next_posting()?;
+            self.load_next_posting().map_err(|e| e.with_context("load_next_posting"))?;
         }
 
         Ok(self.current_document)
     }
-    fn load_extents(&mut self) -> Result<(), Error> {
-        if self.extents_loaded {
+    fn get_positions(&mut self) -> Result<&[u32], Error> {
+        if self.is_done() {
+            return Ok(&[]);
+        }
+        self.load_positions()?;
+        Ok(&self.positions_buffer)
+    }
+    fn load_positions(&mut self) -> Result<(), Error> {
+        if self.positions_loaded {
             return Ok(());
         }
 
@@ -399,7 +409,7 @@ impl<'p> PositionsPostingsIter<'p> {
             position += self.positions.read_vbyte()? as u32;
             self.positions_buffer.push(position);
         }
-        self.extents_loaded = true;
+        self.positions_loaded = true;
 
         Ok(())
     }
@@ -447,7 +457,8 @@ mod tests {
         let mut iter = positions.iterator().unwrap();
         while !iter.is_done() {
             iter.sync_to(iter.current_document).unwrap();
-            println!("the[{}] = {}", iter.current_document, iter.current_count);
+            println!("the[{}] = {} .. ", iter.current_document, iter.current_count);
+            println!("   {:?}", iter.get_positions().unwrap());
             iter.sync_to(iter.current_document+1).unwrap();
         }
     }
