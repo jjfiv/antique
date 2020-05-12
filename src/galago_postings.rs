@@ -7,6 +7,20 @@ impl ValueEntry {
     fn stream(&self) -> SliceInputStream {
         SliceInputStream::new(&self.source[self.start..self.end])
     }
+    fn substream(&self, start_end: (usize, usize)) -> SliceInputStream {
+        let (start, end) = start_end;
+        let sub_start = self.start + start;
+        let sub_end = self.start + end;
+        // OK to each other:
+        debug_assert!(sub_start <= sub_end);
+
+        // OK to outer stream:
+        debug_assert!(sub_start >= self.start);
+        debug_assert!(sub_start < self.end);
+        debug_assert!(sub_end > self.start);
+        debug_assert!(sub_end <= self.end);
+        SliceInputStream::new(&self.source[sub_start..sub_end])
+    }
 }
 
 pub struct LengthsPostings {
@@ -72,6 +86,139 @@ impl LengthsPostings {
             last_doc,
             values_offset,
         })
+    }
+}
+
+pub struct PositionsPostings {
+    source: ValueEntry,
+    document_count: u64,
+    total_position_count: u64,
+    maximum_position_count: Option<u32>,
+    inline_minimum: Option<u32>,
+    documents: (usize, usize),
+    counts: (usize, usize),
+    positions: (usize, usize),
+    skip_data: Option<(usize, usize)>,
+    skip_positions: Option<(usize, usize)>,
+    first_skip: Option<SkipState>,
+}
+
+#[derive(Default, Debug, Clone)]
+struct SkipState {
+    distance: u64,
+    reset_distance: u64,
+    total: u64,
+    read: u64,
+    next_document: u64,
+    next_position: u64,
+    documents_byte_floor: u64,
+    counts_byte_floor: u64,
+    positions_byte_floor: u64,
+}
+
+pub struct PositionsPostingsIter<'p> {
+    postings: &'p PositionsPostings,
+
+    documents: SliceInputStream<'p>,
+    counts: SliceInputStream<'p>,
+    positions: SliceInputStream<'p>,
+    skip_data: Option<SliceInputStream<'p>>,
+    skip_positions: Option<SliceInputStream<'p>>,
+
+    skip: Option<SkipState>,
+    document_index: u64,
+    current_document: u64,
+    current_count: u32,
+    done: bool,
+    positions_buffer: Vec<u32>,
+    extents_loaded: bool,
+    extents_byte_size: u32,
+}
+
+const HAS_SKIPS: u8 = 0b1;
+const HAS_MAXTF: u8 = 0b10;
+const HAS_INLINING: u8 = 0b100;
+
+impl PositionsPostings {
+    pub fn new(source: ValueEntry) -> Result<PositionsPostings, Error> {
+        let mut reader = source.stream();
+
+        let options = reader.read_vbyte()? as u8;
+        let has_inlining = options & HAS_INLINING > 0;
+        let has_skips = options & HAS_SKIPS > 0;
+        let has_maxtf = options & HAS_MAXTF > 0;
+
+        let inline_minimum = if has_inlining {
+            Some(reader.read_vbyte()? as u32)
+        } else { None };
+        let document_count = reader.read_vbyte()?;
+        let total_position_count = reader.read_vbyte()?;
+        let maximum_position_count = if has_maxtf { Some(reader.read_vbyte()? as u32) } else { None };
+        let mut skip = if has_skips {
+            let distance = reader.read_vbyte()?;
+            let reset_distance = reader.read_vbyte()?;
+            let total = reader.read_vbyte()?;
+            Some(SkipState { 
+                distance,
+                reset_distance,
+                total,
+                ..Default::default() })
+        } else {
+            None
+        };
+
+        let documents_length = reader.read_vbyte()? as usize;
+        let counts_length = reader.read_vbyte()? as usize;
+        let positions_length = reader.read_vbyte()? as usize;
+        let skips_length  = if has_skips { reader.read_vbyte()? as usize } else { 0 };
+        let skip_positions_length = if has_skips { reader.read_vbyte()? as usize } else { 0 };
+
+        let documents_start = reader.tell();
+        let counts_start = documents_start + documents_length;
+        let positions_start = counts_start + counts_length;
+        let positions_end = positions_start + positions_length;
+
+        // Keep slices ready-to-go:
+        let documents = (documents_start, counts_start);
+        let counts = (counts_start, positions_start);
+        let positions = (positions_start, positions_end);
+
+        let mut skip_data = None;
+        let mut skip_positions = None;
+        if let Some(skip) = skip.as_mut() {
+            let skips_start = positions_end;
+            let skip_positions_start = skips_start + skips_length;
+            let skip_positions_end = skip_positions_start + skip_positions_length;
+            skip_data = Some((skips_start, skip_positions_start));
+            skip_positions = Some((skip_positions_start, skip_positions_end));
+        };
+
+        Ok(PositionsPostings {
+            source,
+            first_skip: skip,
+            total_position_count,
+            document_count, inline_minimum, maximum_position_count, 
+            documents, counts, positions, skip_data, skip_positions,
+        })
+    }
+    pub fn iterator(&self) -> PositionsPostingsIter {
+        let postings = self;
+        PositionsPostingsIter {
+            postings,
+            skip: postings.first_skip.clone(),
+            documents: postings.source.substream(postings.documents),
+            counts: postings.source.substream(postings.counts),
+            positions: postings.source.substream(postings.positions),
+            skip_data: postings.skip_data.map(|it| postings.source.substream(it)),
+            skip_positions: postings.skip_positions.map(|it| postings.source.substream(it)),
+            done: false,
+            extents_loaded: false,
+            document_index: 0,
+            extents_byte_size: 0,
+            current_count: 0,
+            current_document: 0,
+            positions_buffer: Vec::new(), 
+        }
     }
 }
 
