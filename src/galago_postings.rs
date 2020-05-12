@@ -89,6 +89,7 @@ impl LengthsPostings {
     }
 }
 
+#[derive(Debug)]
 pub struct PositionsPostings {
     source: ValueEntry,
     document_count: u64,
@@ -98,41 +99,63 @@ pub struct PositionsPostings {
     documents: (usize, usize),
     counts: (usize, usize),
     positions: (usize, usize),
-    skip_data: Option<(usize, usize)>,
-    skip_positions: Option<(usize, usize)>,
-    first_skip: Option<SkipState>,
+    skips: Option<SkipConfig>,
 }
 
 #[derive(Default, Debug, Clone)]
-struct SkipState {
+struct SkipConfig {
     distance: u64,
     reset_distance: u64,
     total: u64,
+    data: (usize, usize),
+    positions: (usize, usize),
+}
+
+#[derive(Debug, Clone)]
+struct SkipState<'p> {
+    config: SkipConfig,
+    data: SliceInputStream<'p>,
+    positions: SliceInputStream<'p>,
     read: u64,
     next_document: u64,
     next_position: u64,
-    documents_byte_floor: u64,
-    counts_byte_floor: u64,
-    positions_byte_floor: u64,
+    documents_byte_floor: usize,
+    counts_byte_floor: usize,
+    positions_byte_floor: usize,
+}
+
+impl<'p> SkipState<'p> {
+    fn new(postings: &'p PositionsPostings, config: SkipConfig) -> Result<SkipState<'p>, Error> {
+        let mut data = postings.source.substream(config.data);
+        let positions = postings.source.substream(config.positions);
+        let next_document = data.read_vbyte()?;
+
+        Ok(SkipState {
+            config,
+            data,
+            positions,
+            next_document,
+            read: 0,
+            next_position: 0,
+            documents_byte_floor: 0,
+            counts_byte_floor: 0,
+            positions_byte_floor: 0,
+        })
+    }
 }
 
 pub struct PositionsPostingsIter<'p> {
     postings: &'p PositionsPostings,
-
     documents: SliceInputStream<'p>,
     counts: SliceInputStream<'p>,
     positions: SliceInputStream<'p>,
-    skip_data: Option<SliceInputStream<'p>>,
-    skip_positions: Option<SliceInputStream<'p>>,
-
-    skip: Option<SkipState>,
+    skips: Option<SkipState<'p>>,
     document_index: u64,
     current_document: u64,
     current_count: u32,
-    done: bool,
     positions_buffer: Vec<u32>,
     extents_loaded: bool,
-    extents_byte_size: u32,
+    extents_byte_size: usize,
 }
 
 const HAS_SKIPS: u8 = 0b1;
@@ -158,7 +181,7 @@ impl PositionsPostings {
             let distance = reader.read_vbyte()?;
             let reset_distance = reader.read_vbyte()?;
             let total = reader.read_vbyte()?;
-            Some(SkipState { 
+            Some(SkipConfig { 
                 distance,
                 reset_distance,
                 total,
@@ -183,42 +206,202 @@ impl PositionsPostings {
         let counts = (counts_start, positions_start);
         let positions = (positions_start, positions_end);
 
-        let mut skip_data = None;
-        let mut skip_positions = None;
+        // Now read skips slices if we have skips.
         if let Some(skip) = skip.as_mut() {
             let skips_start = positions_end;
             let skip_positions_start = skips_start + skips_length;
             let skip_positions_end = skip_positions_start + skip_positions_length;
-            skip_data = Some((skips_start, skip_positions_start));
-            skip_positions = Some((skip_positions_start, skip_positions_end));
+            skip.data = (skips_start, skip_positions_start);
+            skip.positions = (skip_positions_start, skip_positions_end);
         };
 
         Ok(PositionsPostings {
             source,
-            first_skip: skip,
+            skips: skip,
             total_position_count,
             document_count, inline_minimum, maximum_position_count, 
-            documents, counts, positions, skip_data, skip_positions,
+            documents, counts, positions,
         })
     }
-    pub fn iterator(&self) -> PositionsPostingsIter {
+    pub fn iterator(&self) -> Result<PositionsPostingsIter, Error> {
         let postings = self;
-        PositionsPostingsIter {
+        let skips = if let Some(skip_cfg) = &postings.skips {
+            Some(SkipState::new(postings, skip_cfg.clone())?)
+        } else {
+            None
+        };
+        Ok(PositionsPostingsIter {
             postings,
-            skip: postings.first_skip.clone(),
+            skips,
             documents: postings.source.substream(postings.documents),
             counts: postings.source.substream(postings.counts),
             positions: postings.source.substream(postings.positions),
-            skip_data: postings.skip_data.map(|it| postings.source.substream(it)),
-            skip_positions: postings.skip_positions.map(|it| postings.source.substream(it)),
-            done: false,
             extents_loaded: false,
             document_index: 0,
             extents_byte_size: 0,
             current_count: 0,
             current_document: 0,
             positions_buffer: Vec::new(), 
+        })
+    }
+}
+
+impl<'p> SkipState<'p> {
+    fn sync_to(&mut self, current_document: u64) -> Result<(), Error> {
+        // Make sure skips is caught up to a current document:
+        while self.next_document <= current_document {
+            let _ = self.skip_once()?;
         }
+        Ok(())
+    }
+    fn skip_once(&mut self) -> Result<u64, Error> {
+        if self.next_document == std::u64::MAX {
+            return Ok(self.next_document);
+        }
+
+        debug_assert!(self.read < self.config.total);
+
+        // data = (delta-positions, delta_document_id)
+        let current_skip_position = self.next_position + self.data.read_vbyte()?;
+        if self.read % self.config.reset_distance == 0 {
+            self.positions.seek(current_skip_position as usize)?;
+
+            // positions = (docs_ptr, counts_ptr, positions_ptr)*
+            self.documents_byte_floor = self.positions.read_vbyte()? as usize;
+            self.counts_byte_floor = self.positions.read_vbyte()? as usize;
+            self.positions_byte_floor = self.positions.read_vbyte()? as usize;
+        }
+        let current_document = self.next_document;
+
+        if self.read + 1 == self.config.total {
+            self.next_document = std::u64::MAX;
+        } else {
+            self.next_document += self.data.read_vbyte()?;
+        }
+        self.read += 1;
+        self.next_position = current_skip_position;
+
+        Ok(current_document)
+    }
+}
+
+impl<'p> PositionsPostingsIter<'p> {
+    /// Some positions arrays are prefixed with their length, but it depends on their size.
+    /// If "inlining" was turned of while writing, they're all NOT prefixed with their length, even if many many positions to load/skip.
+    fn current_positions_has_length(&self) -> bool {
+        if let Some(inline_minimum) = self.postings.inline_minimum {
+            self.current_count > inline_minimum
+        } else {
+            false
+        }
+    }
+    fn is_done(&self) -> bool {
+        self.current_document == std::u64::MAX
+    }
+    fn load_next_posting(&mut self) -> Result<(), Error> {
+        if self.document_index > self.postings.document_count {
+            // Free memory:
+            self.positions_buffer.clear();
+            self.positions_buffer.shrink_to_fit();
+
+            self.current_count = 0;
+            self.current_document = std::u64::MAX;
+            return Ok(());
+        }
+
+        if !self.extents_loaded {
+            if self.current_positions_has_length() {
+                let _ = self.positions.consume(self.extents_byte_size)?;
+            } else {
+                // skip extents, the hard way.
+                for _ in 0..self.current_count {
+                    let _ = self.positions.read_vbyte()?;
+                }
+            }
+        }
+
+        // Step forward:
+        self.current_document += self.documents.read_vbyte()?;
+        self.current_count = self.counts.read_vbyte()? as u32;
+
+        // prepare the array of positions:
+        self.positions_buffer.clear();
+        self.extents_loaded = false;
+
+        if self.current_positions_has_length() {
+            // lazy-load, since we can.
+            self.extents_byte_size = self.positions.read_vbyte()? as usize;
+        } else {
+            self.load_extents()?;
+        }
+
+        Ok(())
+    }
+    fn reposition_main_streams(&mut self) -> Result<(), Error> {
+        let skips = self.skips.as_mut().unwrap();
+        // Two-level skip; if we just reset-floors, no reading necessary...
+        if (skips.read - 1) % skips.config.reset_distance == 0 {
+            self.documents.seek(skips.documents_byte_floor)?;
+            self.counts.seek(skips.counts_byte_floor)?;
+            self.positions.seek(skips.positions_byte_floor)?;
+        } else {
+            skips.positions.seek(skips.next_position as usize)?;
+            self.documents.seek(skips.documents_byte_floor + skips.positions.read_vbyte()? as usize)?;
+            self.counts.seek(skips.counts_byte_floor + skips.positions.read_vbyte()? as usize)?;
+            self.positions.seek(skips.positions_byte_floor + skips.positions.read_vbyte()? as usize)?;
+        }
+        self.document_index = (skips.config.distance * skips.read) - 1;
+        Ok(())
+    }
+    pub fn sync_to(&mut self, document: u64) -> Result<u64, Error> {
+        if self.is_done() {
+            return Ok(self.current_document);
+        }
+
+        let needs_sync = if let Some(skips) = self.skips.as_mut() {
+            skips.sync_to(self.current_document)?;
+
+            // Can we use our skips?
+            if document > skips.next_document {
+                // Ditch extent state.
+                self.extents_loaded = true;
+                self.extents_byte_size = 0;
+
+                while skips.read < skips.config.total && document > skips.next_document {
+                    self.current_document = skips.skip_once()?;
+                }
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if needs_sync {
+            self.reposition_main_streams()?;
+        }
+        // Skips tapped out or never used; linear search from here:
+        while document > self.current_document && self.document_index <= self.postings.document_count {
+            self.document_index += 1;
+            self.load_next_posting()?;
+        }
+
+        Ok(self.current_document)
+    }
+    fn load_extents(&mut self) -> Result<(), Error> {
+        if self.extents_loaded {
+            return Ok(());
+        }
+
+        // Delta-coded positions:
+        let mut position = 0;
+        for _ in 0..self.current_count {
+            position += self.positions.read_vbyte()? as u32;
+            self.positions_buffer.push(position);
+        }
+        self.extents_loaded = true;
+
+        Ok(())
     }
 }
 
@@ -253,5 +436,19 @@ mod tests {
 
         let diff = (avg_length - lengths.avg_length).abs();
         assert!(diff < 0.001);
+    }
+
+    #[test]
+    fn test_load_positions() {
+        let reader = btree::read_info(&Path::new("data/index.galago/postings")).unwrap();
+        let the_entry = reader.find_str("the").unwrap().unwrap();
+        let positions = PositionsPostings::new(the_entry).unwrap();
+        println!("positions {:?}", positions);
+        let mut iter = positions.iterator().unwrap();
+        while !iter.is_done() {
+            iter.sync_to(iter.current_document).unwrap();
+            println!("the[{}] = {}", iter.current_document, iter.current_count);
+            iter.sync_to(iter.current_document+1).unwrap();
+        }
     }
 }

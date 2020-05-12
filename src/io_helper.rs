@@ -38,6 +38,7 @@ impl fmt::Debug for Bytes {
         }
     }
 }
+#[derive(Debug, Clone)]
 pub struct SliceInputStream<'src> {
     data: &'src [u8],
     // TODO: keeping this separate in case we need to rewind...
@@ -53,6 +54,14 @@ impl<'src> SliceInputStream<'src> {
     }
     pub fn eof(&self) -> bool {
         self.position >= self.data.len()
+    }
+    pub fn seek(&mut self, position: usize) -> Result<(), Error> {
+        self.position = position;
+        if self.position < self.data.len() {
+            Ok(())
+        } else {
+            Err(Error::InternalSizeErr)
+        }
     }
     #[inline]
     pub fn consume(&mut self, n: usize) -> Result<&'src [u8], Error> {
