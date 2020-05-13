@@ -22,9 +22,16 @@ impl IndexPartType {
     }
 }
 
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
 pub struct DocId(u64);
 
 impl DocId {
+    pub fn is_done(&self) -> bool {
+        self.0 == std::u64::MAX
+    }
+    pub fn no_more() -> DocId {
+        DocId(std::u64::MAX)
+    }
     pub fn from_names_entry(entry: ValueEntry) -> Result<DocId, Error> {
         debug_assert_eq!(entry.len(), 8);
         Ok(DocId(entry.stream().read_u64()?))
@@ -60,20 +67,20 @@ pub struct LengthsPostings {
     pub avg_length: f64, // TODO: to-double?
     pub max_length: u64,
     pub min_length: u64,
-    pub first_doc: u64,
-    pub last_doc: u64,
+    pub first_doc: DocId,
+    pub last_doc: DocId,
     values_offset: usize,
 }
 
 impl LengthsPostings {
     pub fn num_entries(&self) -> usize {
-        (self.last_doc - self.first_doc + 1) as usize
+        (self.last_doc.0 - self.first_doc.0 + 1) as usize
     }
-    pub fn length(&self, docid: u64) -> Option<u32> {
+    pub fn length(&self, docid: DocId) -> Option<u32> {
         if docid < self.first_doc || docid > self.last_doc {
             return None;
         }
-        let offset = ((docid - self.first_doc) * 4) as usize;
+        let offset = ((docid.0 - self.first_doc.0) * 4) as usize;
         let begin = self.values_offset + offset + self.source.start;
         self.source.source[begin..begin + 4]
             .try_into()
@@ -96,8 +103,8 @@ impl LengthsPostings {
         let avg_length = f64::from_bits(stream.read_u64()?);
         let max_length = stream.read_u64()?;
         let min_length = stream.read_u64()?;
-        let first_doc = stream.read_u64()?;
-        let last_doc = stream.read_u64()?;
+        let first_doc = DocId(stream.read_u64()?);
+        let last_doc = DocId(stream.read_u64()?);
         let values_offset = stream.tell();
 
         Ok(LengthsPostings {
@@ -138,7 +145,7 @@ pub struct PositionsPostingsIter<'p> {
     counts: SliceInputStream<'p>,
     positions: SliceInputStream<'p>,
     document_index: u64,
-    pub current_document: u64,
+    pub current_document: DocId,
     current_count: u32,
     positions_buffer: Vec<u32>,
     positions_loaded: bool,
@@ -210,7 +217,7 @@ impl PositionsPostings {
             positions: postings.source.substream(postings.positions),
             positions_byte_size: 0,
             current_count: 0,
-            current_document: 0,
+            current_document: DocId(0),
             positions_buffer: Vec::new(), 
             // These two values are basically invalid; but tricks to init correctly...
             positions_loaded: true,
@@ -232,7 +239,7 @@ impl<'p> PositionsPostingsIter<'p> {
         }
     }
     fn is_done(&self) -> bool {
-        self.current_document == std::u64::MAX
+        self.current_document.is_done()
     }
     fn load_next_posting(&mut self) -> Result<(), Error> {
         if self.document_index >= self.postings.document_count {
@@ -241,7 +248,7 @@ impl<'p> PositionsPostingsIter<'p> {
             self.positions_buffer.shrink_to_fit();
 
             self.current_count = 0;
-            self.current_document = std::u64::MAX;
+            self.current_document = DocId::no_more();
             return Ok(());
         }
 
@@ -257,7 +264,7 @@ impl<'p> PositionsPostingsIter<'p> {
         }
 
         // Step forward:
-        self.current_document += self.documents.read_vbyte()?;
+        self.current_document.0 += self.documents.read_vbyte()?;
         self.current_count = self.counts.read_vbyte()? as u32;
 
         // prepare the array of positions:
@@ -273,7 +280,10 @@ impl<'p> PositionsPostingsIter<'p> {
 
         Ok(())
     }
-    pub fn sync_to(&mut self, document: u64) -> Result<u64, Error> {
+    pub fn move_past(&mut self) -> Result<DocId, Error> {
+        self.sync_to(DocId(self.current_document.0+1))
+    }
+    pub fn sync_to(&mut self, document: DocId) -> Result<DocId, Error> {
         // Linear search through the postings-list:
         // Don't have to check for done here because of u64::max trick.
         while document > self.current_document && self.document_index < self.postings.document_count {
@@ -320,15 +330,15 @@ mod tests {
         let lengths_entry = reader.find_str("document").unwrap().unwrap();
         let lengths = LengthsPostings::new(lengths_entry).unwrap();
         assert_eq!(lengths.to_vec(), TRUE_LENGTHS);
-        assert_eq!(lengths.length(3), Some(19));
+        assert_eq!(lengths.length(DocId(3)), Some(19));
         assert_eq!(lengths.max_length, 1717);
         assert_eq!(lengths.min_length, 19);
         let sum = TRUE_LENGTHS.iter().map(|l| *l as u64).sum::<u64>();
         assert_eq!(lengths.collection_length, sum);
         assert_eq!(lengths.non_zero_document_count as usize, TRUE_LENGTHS.len());
         assert_eq!(lengths.total_document_count as usize, TRUE_LENGTHS.len());
-        assert_eq!(lengths.first_doc, 0);
-        assert_eq!(lengths.last_doc as usize, TRUE_LENGTHS.len() - 1);
+        assert_eq!(lengths.first_doc, DocId(0));
+        assert_eq!(lengths.last_doc.0 as usize, TRUE_LENGTHS.len() - 1);
 
         assert_ne!(0, TRUE_LENGTHS.len());
         let avg_length = sum as f64 / (TRUE_LENGTHS.len() as f64);
@@ -346,9 +356,9 @@ mod tests {
         let mut iter = positions.iterator().unwrap();
         while !iter.is_done() {
             iter.sync_to(iter.current_document).unwrap();
-            println!("the[{}] = {} .. ", iter.current_document, iter.current_count);
+            println!("the[{:?}] = {} .. ", iter.current_document, iter.current_count);
             println!("   {:?}", iter.get_positions().unwrap());
-            iter.sync_to(iter.current_document+1).unwrap();
+            iter.move_past().unwrap();
         }
     }
 }
