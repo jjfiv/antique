@@ -1,7 +1,8 @@
 use crate::galago_btree::ValueEntry;
 use crate::io_helper::SliceInputStream;
-use crate::Error;
+use crate::{DocId, Error};
 use std::convert::TryInto;
+use crate::scoring::SyncTo;
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Debug, Clone, Copy)]
 pub enum IndexPartType {
@@ -32,22 +33,6 @@ impl IndexPartType {
     }
 }
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
-#[repr(transparent)]
-pub struct DocId(u64);
-
-impl DocId {
-    pub fn is_done(&self) -> bool {
-        self.0 == std::u64::MAX
-    }
-    pub fn no_more() -> DocId {
-        DocId(std::u64::MAX)
-    }
-    pub fn from_names_entry(entry: ValueEntry) -> Result<DocId, Error> {
-        debug_assert_eq!(entry.len(), 8);
-        Ok(DocId(entry.stream().read_u64()?))
-    }
-}
 
 impl ValueEntry {
     fn stream(&self) -> SliceInputStream {
@@ -291,19 +276,6 @@ impl<'p> PositionsPostingsIter<'p> {
 
         Ok(())
     }
-    pub fn move_past(&mut self) -> Result<DocId, Error> {
-        self.sync_to(DocId(self.current_document.0+1))
-    }
-    pub fn sync_to(&mut self, document: DocId) -> Result<DocId, Error> {
-        // Linear search through the postings-list:
-        // Don't have to check for done here because of u64::max trick.
-        while document > self.current_document && self.document_index < self.postings.document_count {
-            self.document_index += 1;
-            self.load_next_posting().map_err(|e| e.with_context("load_next_posting"))?;
-        }
-
-        Ok(self.current_document)
-    }
     pub fn get_positions(&mut self) -> Result<&[u32], Error> {
         if self.is_done() {
             return Ok(&[]);
@@ -328,11 +300,29 @@ impl<'p> PositionsPostingsIter<'p> {
     }
 }
 
+/// Implementing SyncTo to get nice movement functions.
+impl<'p> SyncTo for PositionsPostingsIter<'p> {
+    fn current_document(&self) -> DocId {
+        self.current_document
+    }
+    fn sync_to(&mut self, document: DocId) -> Result<DocId, Error> {
+        // Linear search through the postings-list:
+        // Don't have to check for done here because of u64::max trick.
+        while document > self.current_document && self.document_index < self.postings.document_count {
+            self.document_index += 1;
+            self.load_next_posting().map_err(|e| e.with_context("load_next_posting"))?;
+        }
+
+        Ok(self.current_document)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::galago_btree as btree;
     use std::path::Path;
+    use crate::scoring::Movement;
 
     #[test]
     fn test_index_parts() {

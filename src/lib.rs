@@ -1,6 +1,7 @@
 pub mod galago_btree;
 pub mod galago_postings;
 pub mod io_helper;
+pub mod scoring;
 
 #[macro_use]
 extern crate serde_derive;
@@ -35,5 +36,18 @@ impl From<io::Error> for Error {
 impl From<Utf8Error> for Error {
     fn from(err: Utf8Error) -> Error {
         Error::Utf8DecodeError(err)
+    }
+}
+
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
+#[repr(transparent)]
+pub struct DocId(u64);
+
+impl DocId {
+    pub fn is_done(&self) -> bool {
+        self.0 == std::u64::MAX
+    }
+    pub fn no_more() -> DocId {
+        DocId(std::u64::MAX)
     }
 }

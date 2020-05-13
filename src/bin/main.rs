@@ -3,6 +3,7 @@ use std::env;
 use std::io;
 use std::path::Path;
 
+use antique::scoring::*;
 use antique::galago_btree as btree;
 use antique::galago_postings::*;
 use io::Write;
