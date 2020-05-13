@@ -13,8 +13,18 @@ pub enum IndexPartType {
 }
 
 impl IndexPartType {
+    #[cfg(test)]
+    fn from_file(path: &str) -> Result<IndexPartType, Error> {
+        use crate::galago_btree::TreeReader;
+        use std::path::Path;
+        let reader = TreeReader::new(Path::new(path))?;
+        Self::from_reader_class(&reader.manifest.reader_class)
+    }
     pub fn from_reader_class(class_name: &str) -> Result<IndexPartType, Error> {
         Ok(match class_name {
+            "org.lemurproject.galago.core.index.disk.DiskNameReader" => IndexPartType::Names,
+            "org.lemurproject.galago.core.index.disk.DiskNameReverseReader" => IndexPartType::NamesReverse,
+            "org.lemurproject.galago.core.index.corpus.CorpusReader" => IndexPartType::Corpus,
             "org.lemurproject.galago.core.index.disk.DiskLengthsReader" => IndexPartType::Lengths,
             "org.lemurproject.galago.core.index.disk.PositionIndexReader" => IndexPartType::Positions,
             _ => return Err(Error::MissingGalagoReader(class_name.to_string()))
@@ -23,6 +33,7 @@ impl IndexPartType {
 }
 
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
+#[repr(transparent)]
 pub struct DocId(u64);
 
 impl DocId {
@@ -322,6 +333,16 @@ mod tests {
     use super::*;
     use crate::galago_btree as btree;
     use std::path::Path;
+
+    #[test]
+    fn test_index_parts() {
+        assert_eq!(IndexPartType::Lengths, IndexPartType::from_file("data/index.galago/lengths").unwrap());
+        assert_eq!(IndexPartType::Positions, IndexPartType::from_file("data/index.galago/postings").unwrap());
+        assert_eq!(IndexPartType::Positions, IndexPartType::from_file("data/index.galago/postings.krovetz").unwrap());
+        assert_eq!(IndexPartType::Names, IndexPartType::from_file("data/index.galago/names").unwrap());
+        assert_eq!(IndexPartType::NamesReverse, IndexPartType::from_file("data/index.galago/names.reverse").unwrap());
+        assert_eq!(IndexPartType::Corpus, IndexPartType::from_file("data/index.galago/corpus").unwrap());
+    }
 
     #[test]
     fn test_load_lengths() {

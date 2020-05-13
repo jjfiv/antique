@@ -112,6 +112,12 @@ pub fn file_matches(path: &Path) -> Result<bool, Error> {
     Ok(maybe_magic == MAGIC_NUMBER)
 }
 
+impl TreeReader {
+    pub fn new(path: &Path) -> Result<TreeReader, Error> {
+        read_info(path)
+    }
+}
+
 /// Read footer:
 pub fn read_info(path: &Path) -> Result<TreeReader, Error> {
     let location = TreeLocation::new(path)?;
