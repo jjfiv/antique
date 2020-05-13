@@ -16,7 +16,7 @@ pub enum Error {
     BadGalagoMagic(u64),
     BadManifest(serde_json::Error),
     InternalSizeErr,
-    Context(String, Box<Error>)
+    Context(String, Box<Error>),
 }
 
 impl Error {

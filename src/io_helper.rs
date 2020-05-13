@@ -41,7 +41,7 @@ impl fmt::Debug for Bytes {
 #[derive(Clone)]
 pub struct SliceInputStream<'src> {
     data: &'src [u8],
-    // TODO: keeping this separate in case we need to rewind...
+    /// This supports rewinding and "telling" how far we've read.
     position: usize,
 }
 

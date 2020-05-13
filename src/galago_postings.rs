@@ -90,6 +90,9 @@ impl LengthsPostings {
     }
 }
 
+/// Note that this resembles: PositionIndexExtentSource.java from Galago, but we don't support skips.
+/// I couldn't find any indexes in-the-wild (on CIIR servers) that actually had them for testing.
+/// So I decided to ditch the un-tested code rather than pursue generating an index with them.
 #[derive(Debug)]
 pub struct PositionsPostings {
     source: ValueEntry,
@@ -100,58 +103,15 @@ pub struct PositionsPostings {
     documents: (usize, usize),
     counts: (usize, usize),
     positions: (usize, usize),
-    skips: Option<SkipConfig>,
 }
 
-#[derive(Default, Debug, Clone)]
-struct SkipConfig {
-    distance: u64,
-    reset_distance: u64,
-    total: u64,
-    data: (usize, usize),
-    positions: (usize, usize),
-}
-
-#[derive(Debug, Clone)]
-struct SkipState<'p> {
-    config: SkipConfig,
-    data: SliceInputStream<'p>,
-    positions: SliceInputStream<'p>,
-    read: u64,
-    next_document: u64,
-    next_position: u64,
-    documents_byte_floor: usize,
-    counts_byte_floor: usize,
-    positions_byte_floor: usize,
-}
-
-impl<'p> SkipState<'p> {
-    fn new(postings: &'p PositionsPostings, config: SkipConfig) -> Result<SkipState<'p>, Error> {
-        let mut data = postings.source.substream(config.data);
-        let positions = postings.source.substream(config.positions);
-        let next_document = data.read_vbyte()?;
-
-        Ok(SkipState {
-            config,
-            data,
-            positions,
-            next_document,
-            read: 0,
-            next_position: 0,
-            documents_byte_floor: 0,
-            counts_byte_floor: 0,
-            positions_byte_floor: 0,
-        })
-    }
-}
-
+/// Represent a positions iterator.
 #[derive(Debug)]
 pub struct PositionsPostingsIter<'p> {
     postings: &'p PositionsPostings,
     documents: SliceInputStream<'p>,
     counts: SliceInputStream<'p>,
     positions: SliceInputStream<'p>,
-    skips: Option<SkipState<'p>>,
     document_index: u64,
     pub current_document: u64,
     current_count: u32,
@@ -160,8 +120,11 @@ pub struct PositionsPostingsIter<'p> {
     positions_byte_size: usize,
 }
 
+/// Note we detect skips, and ignore them.
 const HAS_SKIPS: u8 = 0b1;
+/// In practice, most indexes have MAXTF set:
 const HAS_MAXTF: u8 = 0b10;
+/// In practice, most indexes have HAS_INLINING set with a threshold of 2:
 const HAS_INLINING: u8 = 0b100;
 
 impl PositionsPostings {
@@ -182,24 +145,22 @@ impl PositionsPostings {
         let document_count = reader.read_vbyte()?;
         let total_position_count = reader.read_vbyte()?;
         let maximum_position_count = if has_maxtf { Some(reader.read_vbyte()? as u32) } else { None };
-        let mut skip = if has_skips {
-            let distance = reader.read_vbyte()?;
-            let reset_distance = reader.read_vbyte()?;
-            let total = reader.read_vbyte()?;
-            Some(SkipConfig { 
-                distance,
-                reset_distance,
-                total,
-                ..Default::default() })
-        } else {
-            None
-        };
+
+        // We don't support skips, but we can support ignoring them fairly easily.
+        if has_skips {
+            let _distance = reader.read_vbyte()?;
+            let _reset_distance = reader.read_vbyte()?;
+            let _total = reader.read_vbyte()?;
+        }
 
         let documents_length = reader.read_vbyte()? as usize;
         let counts_length = reader.read_vbyte()? as usize;
         let positions_length = reader.read_vbyte()? as usize;
-        let skips_length  = if has_skips { reader.read_vbyte()? as usize } else { 0 };
-        let skip_positions_length = if has_skips { reader.read_vbyte()? as usize } else { 0 };
+        // Again, we don't support skips, bug ignore them.
+        if has_skips {
+            let _skips_length  = reader.read_vbyte()?;
+            let _skip_positions_length = reader.read_vbyte()?;
+        }
 
         let documents_start = reader.tell();
         let counts_start = documents_start + documents_length;
@@ -211,18 +172,8 @@ impl PositionsPostings {
         let counts = (counts_start, positions_start);
         let positions = (positions_start, positions_end);
 
-        // Now read skips slices if we have skips.
-        if let Some(skip) = skip.as_mut() {
-            let skips_start = positions_end;
-            let skip_positions_start = skips_start + skips_length;
-            let skip_positions_end = skip_positions_start + skip_positions_length;
-            skip.data = (skips_start, skip_positions_start);
-            skip.positions = (skip_positions_start, skip_positions_end);
-        };
-
         Ok(PositionsPostings {
             source,
-            skips: skip,
             total_position_count,
             document_count, inline_minimum, maximum_position_count, 
             documents, counts, positions,
@@ -230,14 +181,8 @@ impl PositionsPostings {
     }
     pub fn iterator(&self) -> Result<PositionsPostingsIter, Error> {
         let postings = self;
-        let skips = if let Some(skip_cfg) = &postings.skips {
-            Some(SkipState::new(postings, skip_cfg.clone())?)
-        } else {
-            None
-        };
         let mut iter = PositionsPostingsIter {
             postings,
-            skips,
             documents: postings.source.substream(postings.documents),
             counts: postings.source.substream(postings.counts),
             positions: postings.source.substream(postings.positions),
@@ -251,45 +196,6 @@ impl PositionsPostings {
         };
         iter.load_next_posting()?;
         Ok(iter)
-    }
-}
-
-impl<'p> SkipState<'p> {
-    fn sync_to(&mut self, current_document: u64) -> Result<(), Error> {
-        // Make sure skips is caught up to a current document:
-        while self.next_document <= current_document {
-            let _ = self.skip_once()?;
-        }
-        Ok(())
-    }
-    fn skip_once(&mut self) -> Result<u64, Error> {
-        if self.next_document == std::u64::MAX {
-            return Ok(self.next_document);
-        }
-
-        debug_assert!(self.read < self.config.total);
-
-        // data = (delta-positions, delta_document_id)
-        let current_skip_position = self.next_position + self.data.read_vbyte()?;
-        if self.read % self.config.reset_distance == 0 {
-            self.positions.seek(current_skip_position as usize)?;
-
-            // positions = (docs_ptr, counts_ptr, positions_ptr)*
-            self.documents_byte_floor = self.positions.read_vbyte()? as usize;
-            self.counts_byte_floor = self.positions.read_vbyte()? as usize;
-            self.positions_byte_floor = self.positions.read_vbyte()? as usize;
-        }
-        let current_document = self.next_document;
-
-        if self.read + 1 == self.config.total {
-            self.next_document = std::u64::MAX;
-        } else {
-            self.next_document += self.data.read_vbyte()?;
-        }
-        self.read += 1;
-        self.next_position = current_skip_position;
-
-        Ok(current_document)
     }
 }
 
@@ -345,50 +251,9 @@ impl<'p> PositionsPostingsIter<'p> {
 
         Ok(())
     }
-    fn reposition_main_streams(&mut self) -> Result<(), Error> {
-        let skips = self.skips.as_mut().unwrap();
-        // Two-level skip; if we just reset-floors, no reading necessary...
-        if (skips.read - 1) % skips.config.reset_distance == 0 {
-            self.documents.seek(skips.documents_byte_floor)?;
-            self.counts.seek(skips.counts_byte_floor)?;
-            self.positions.seek(skips.positions_byte_floor)?;
-        } else {
-            skips.positions.seek(skips.next_position as usize)?;
-            self.documents.seek(skips.documents_byte_floor + skips.positions.read_vbyte()? as usize)?;
-            self.counts.seek(skips.counts_byte_floor + skips.positions.read_vbyte()? as usize)?;
-            self.positions.seek(skips.positions_byte_floor + skips.positions.read_vbyte()? as usize)?;
-        }
-        self.document_index = (skips.config.distance * skips.read) - 1;
-        Ok(())
-    }
     pub fn sync_to(&mut self, document: u64) -> Result<u64, Error> {
-        if self.is_done() {
-            return Ok(self.current_document);
-        }
-
-        let needs_sync = if let Some(skips) = self.skips.as_mut() {
-            skips.sync_to(self.current_document).map_err(|e| e.with_context("skips.sync_to"))?;
-
-            // Can we use our skips?
-            if document > skips.next_document {
-                // Ditch extent state.
-                self.positions_loaded = true;
-                self.positions_byte_size = 0;
-
-                while skips.read < skips.config.total && document > skips.next_document {
-                    self.current_document = skips.skip_once().map_err(|e| e.with_context("skips.skip_once"))?;
-                }
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-        if needs_sync {
-            self.reposition_main_streams().map_err(|e| e.with_context("reposition_main_streams"))?;
-        }
-        // Skips tapped out or never used; linear search from here:
+        // Linear search through the postings-list:
+        // Don't have to check for done here because of u64::max trick.
         while document > self.current_document && self.document_index < self.postings.document_count {
             self.document_index += 1;
             self.load_next_posting().map_err(|e| e.with_context("load_next_posting"))?;
