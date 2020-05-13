@@ -382,4 +382,11 @@ mod tests {
             iter.move_past().unwrap();
         }
     }
+
+    #[test]
+    fn test_load_all_field_names() {
+        let reader = btree::read_info(&Path::new("data/index.galago/lengths")).unwrap();
+        let fields = reader.collect_string_keys().unwrap();
+        assert_eq!(fields, &["document".to_string()])
+    }
 }

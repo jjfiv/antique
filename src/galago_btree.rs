@@ -116,6 +116,23 @@ impl TreeReader {
     pub fn new(path: &Path) -> Result<TreeReader, Error> {
         read_info(path)
     }
+
+    /// WARNING: know what you're doing here.
+    /// A lot of indexes will have too many keys for this to be efficient.
+    /// This is for lengths, where there's 1-key per field.
+    pub fn collect_string_keys(&self) -> Result<Vec<String>, Error> {
+        let mut output = Vec::with_capacity(self.manifest.key_count as usize);
+
+        let mut key_buffer = Vec::new();
+        for block in self.vocabulary.blocks.iter() {
+            let mut block_iter = block.iterator(&self.mmap, &mut key_buffer)?;
+            while let Some(_) = block_iter.read_next(&mut key_buffer)? {
+                output.push(str::from_utf8(&key_buffer)?.to_owned());
+            }
+        }
+
+        Ok(output)
+    }
 }
 
 /// Read footer:
@@ -201,7 +218,23 @@ impl TreeReader {
     }
     pub fn find_bytes(&self, key: &[u8]) -> Result<Option<ValueEntry>, Error> {
         let block_index = self.vocabulary.block_binary_search(key);
-        self.vocabulary.blocks[block_index].decode_search(key, self.mmap.clone())
+        let mut key_buffer: Vec<u8> = Vec::new();
+
+        // Can't impl Iterator without heap allocation; much like stdlib's read_line vs. lines()
+        let mut iter = self.vocabulary.blocks[block_index].iterator(&self.mmap, &mut key_buffer)?;
+
+        while let Some(found) = iter.read_next(&mut key_buffer)? {
+            if key == key_buffer.as_slice() {
+                return Ok(Some(ValueEntry {
+                    source: self.mmap.clone(),
+                    start: found.start, 
+                    end: found.end
+                }));
+            } else if key_buffer.as_slice() > key {
+                break;
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -218,13 +251,55 @@ impl ValueEntry {
     }
 }
 
+struct VocabIterValue {
+    start: usize,
+    end: usize,
+}
+
+struct VocabularyBlockIter<'src> {
+    stream: SliceInputStream<'src>,
+    value_end: usize,
+    last_end: usize,
+    key_index: usize,
+    key_count: usize,
+    first: Option<VocabIterValue>,
+}
+
+impl<'src> VocabularyBlockIter<'src> {
+    fn read_next(&mut self, key_buffer: &mut Vec<u8>) -> Result<Option<VocabIterValue>, Error> {
+        // First iteration; return prepared value:
+        if let Some(first) = self.first.take() {
+            Ok(Some(VocabIterValue {
+                start: first.start,
+                end: first.end,
+            }))
+        } else if self.key_index < self.key_count {
+            // 2..n iterations: read from stream as necessary:
+            // The remaining keys are prefix encoded!
+            let start = self.last_end;
+            let common = self.stream.read_vbyte()? as usize;
+            let key_length = self.stream.read_vbyte()? as usize;
+            let suffix = self.stream.read_bytes(key_length - common)?;
+            let end_value_offset = self.stream.read_vbyte()? as usize;
+            self.last_end = self.value_end - end_value_offset;
+
+            // compose the current string in buffer
+            key_buffer.truncate(common); // keep the first ..common chars
+            key_buffer.extend_from_slice(suffix); // extend with what was encoded here.
+            self.key_index += 1;
+
+            Ok(Some(VocabIterValue {
+                start, end: self.last_end
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 impl VocabularyBlock {
-    // TODO: refactor this to be an iterator, and search to be simple over that iterator.
-    fn decode_search(
-        &self,
-        find_key: &[u8],
-        source: Arc<Mmap>,
-    ) -> Result<Option<ValueEntry>, Error> {
+    fn iterator<'src, 'b>(&self, source: &'src Mmap, key_buffer: &'b mut Vec<u8>) -> Result<VocabularyBlockIter<'src>, Error> {
+        // Now the format is defined in DiskBTreeIterator.cacheKeys...
         let value_start = self.begin + (self.header_length as usize);
         // loadBlockHeader:
         let mut header = SliceInputStream::new(&source[self.begin..value_start]);
@@ -236,57 +311,21 @@ impl VocabularyBlock {
         let first_key = header.read_bytes(first_key_length)?;
         // The location of values are encoded as differences from the end of the value strip.
         let end_value_offset = header.read_vbyte()? as usize;
-        let mut last_end = self.end - end_value_offset;
-
-        if find_key == first_key {
-            return Ok(Some(ValueEntry {
-                source,
-                start: value_start,
-                // TBD: is this correct? OR is it (self.end - end_value_offset)
-                end: last_end,
-            }));
-        }
-
-        let mut key_buffer: Vec<u8> = Vec::with_capacity(first_key_length);
+        let last_end = self.end - end_value_offset;
         key_buffer.extend_from_slice(first_key);
+        
+        Ok(VocabularyBlockIter {
+            stream: header,
+            value_end: self.end,
+            last_end,
+            key_count,
+            key_index: 1,
+            first: Some(VocabIterValue {
+                start: value_start,
+                end: last_end,
+            })
+        })
 
-        // The remaining keys are prefix encoded!
-        for _ in 1..key_count {
-            let start = last_end;
-            let common = header.read_vbyte()? as usize;
-            let key_length = header.read_vbyte()? as usize;
-            let suffix = header.read_bytes(key_length - common)?;
-            let end_value_offset = header.read_vbyte()? as usize;
-            last_end = self.end - end_value_offset;
-
-            // compose the current string in buffer
-            key_buffer.truncate(common); // keep the first ..common chars
-            key_buffer.extend_from_slice(suffix); // extend with what was encoded here.
-
-            match find_key.cmp(&key_buffer) {
-                // Continue linear search:
-                cmp::Ordering::Greater => {
-                    continue;
-                }
-                // Found desired key:
-                cmp::Ordering::Equal => {
-                    debug_assert!(start >= self.begin);
-                    debug_assert!(start < self.end);
-                    debug_assert!(last_end > self.begin);
-                    debug_assert!(last_end <= self.end);
-                    return Ok(Some(ValueEntry {
-                        source,
-                        start,
-                        end: last_end,
-                    }));
-                }
-                // Found a key larger than our query, stop immediately.
-                cmp::Ordering::Less => {
-                    return Ok(None);
-                }
-            }
-        }
-        Ok(None)
     }
 }
 
