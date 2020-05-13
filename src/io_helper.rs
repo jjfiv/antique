@@ -38,11 +38,17 @@ impl fmt::Debug for Bytes {
         }
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SliceInputStream<'src> {
     data: &'src [u8],
     // TODO: keeping this separate in case we need to rewind...
     position: usize,
+}
+
+impl fmt::Debug for SliceInputStream<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SliceInputStream[@{}..{}]", self.position, self.data.len())
+    }
 }
 
 impl<'src> SliceInputStream<'src> {

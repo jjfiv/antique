@@ -1,8 +1,11 @@
 use antique::Error;
 use std::env;
+use std::io;
 use std::path::Path;
 
 use antique::galago_btree as btree;
+use antique::galago_postings::*;
+use io::Write;
 
 fn main() -> Result<(), Error> {
     let input = env::args()
@@ -20,11 +23,44 @@ fn main() -> Result<(), Error> {
     println!("Location: {:?}", reader.location);
     println!("Manifest: {:?}", reader.manifest);
 
-    for block in &reader.vocabulary.blocks {
+    for block in reader.vocabulary.blocks.iter().take(20) {
         println!("block: {:?} ..", block.first_key);
     }
+    println!("num_blocks: {}.", reader.vocabulary.blocks.len());
 
     println!("the: {:?}", reader.find_str("the")?);
+
+    let reader_class = &reader.manifest.reader_class;
+    loop {
+        let mut line = String::new();
+        print!("query> ");
+        io::stdout().flush()?;
+        let n = io::stdin().read_line(&mut line)?;
+        if n == 0 {
+            continue;
+        }
+        let value = reader.find_str(line.trim())?;
+        if value.is_none() {
+            println!("Not Found");
+            continue;
+        }
+        let value = value.unwrap();
+        if PositionsPostings::is_appropriate(reader_class) {
+            let postings = PositionsPostings::new(value)?;
+            println!("Postings: {:?}", postings);
+            let mut iter = postings.iterator()?;
+            iter.sync_to(iter.current_document)?;
+            println!("Iterator: {:?}", iter);
+        } else if LengthsPostings::is_appropriate(reader_class) {
+            let lengths = LengthsPostings::new(value)?;
+            println!("Lengths: {:?}", lengths);
+        } else {
+            println!("Reader TODO for: {}", reader_class);
+            break;
+        }
+
+    }
+
 
     Ok(())
 }

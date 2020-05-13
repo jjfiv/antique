@@ -23,6 +23,7 @@ impl ValueEntry {
     }
 }
 
+#[derive(Debug)]
 pub struct LengthsPostings {
     source: ValueEntry,
     pub total_document_count: u64,
@@ -92,9 +93,9 @@ impl LengthsPostings {
 #[derive(Debug)]
 pub struct PositionsPostings {
     source: ValueEntry,
-    document_count: u64,
-    total_position_count: u64,
-    maximum_position_count: Option<u32>,
+    pub document_count: u64,
+    pub total_position_count: u64,
+    pub maximum_position_count: Option<u32>,
     inline_minimum: Option<u32>,
     documents: (usize, usize),
     counts: (usize, usize),
@@ -144,6 +145,7 @@ impl<'p> SkipState<'p> {
     }
 }
 
+#[derive(Debug)]
 pub struct PositionsPostingsIter<'p> {
     postings: &'p PositionsPostings,
     documents: SliceInputStream<'p>,
@@ -151,7 +153,7 @@ pub struct PositionsPostingsIter<'p> {
     positions: SliceInputStream<'p>,
     skips: Option<SkipState<'p>>,
     document_index: u64,
-    current_document: u64,
+    pub current_document: u64,
     current_count: u32,
     positions_buffer: Vec<u32>,
     positions_loaded: bool,
@@ -163,6 +165,9 @@ const HAS_MAXTF: u8 = 0b10;
 const HAS_INLINING: u8 = 0b100;
 
 impl PositionsPostings {
+    pub fn is_appropriate(reader_class: &str) -> bool {
+        "org.lemurproject.galago.core.index.disk.PositionIndexReader" == reader_class
+    }
     pub fn new(source: ValueEntry) -> Result<PositionsPostings, Error> {
         let mut reader = source.stream();
 
@@ -391,7 +396,7 @@ impl<'p> PositionsPostingsIter<'p> {
 
         Ok(self.current_document)
     }
-    fn get_positions(&mut self) -> Result<&[u32], Error> {
+    pub fn get_positions(&mut self) -> Result<&[u32], Error> {
         if self.is_done() {
             return Ok(&[]);
         }
