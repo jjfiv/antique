@@ -206,6 +206,12 @@ pub struct ValueEntry {
     pub(crate) end: usize,
 }
 
+impl ValueEntry {
+    pub fn len(&self) -> usize {
+        self.end - self.start
+    }
+}
+
 impl VocabularyBlock {
     // TODO: refactor this to be an iterator, and search to be simple over that iterator.
     fn decode_search(

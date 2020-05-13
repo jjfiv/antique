@@ -17,6 +17,7 @@ pub enum Error {
     BadManifest(serde_json::Error),
     InternalSizeErr,
     Context(String, Box<Error>),
+    MissingGalagoReader(String),
 }
 
 impl Error {

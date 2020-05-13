@@ -30,13 +30,17 @@ fn main() -> Result<(), Error> {
 
     println!("the: {:?}", reader.find_str("the")?);
 
-    let reader_class = &reader.manifest.reader_class;
+    let part_type = IndexPartType::from_reader_class(&reader.manifest.reader_class)?;
     loop {
         let mut line = String::new();
         print!("query> ");
         io::stdout().flush()?;
         let n = io::stdin().read_line(&mut line)?;
         if n == 0 {
+            // EOF
+            break;
+        } else if line.trim().is_empty() {
+            // Blank line
             continue;
         }
         let value = reader.find_str(line.trim())?;
@@ -45,20 +49,23 @@ fn main() -> Result<(), Error> {
             continue;
         }
         let value = value.unwrap();
-        if PositionsPostings::is_appropriate(reader_class) {
-            let postings = PositionsPostings::new(value)?;
-            println!("Postings: {:?}", postings);
-            let mut iter = postings.iterator()?;
-            iter.sync_to(iter.current_document)?;
-            println!("Iterator: {:?}", iter);
-        } else if LengthsPostings::is_appropriate(reader_class) {
-            let lengths = LengthsPostings::new(value)?;
-            println!("Lengths: {:?}", lengths);
-        } else {
-            println!("Reader TODO for: {}", reader_class);
-            break;
+        match part_type {
+            IndexPartType::Positions => {
+                let postings = PositionsPostings::new(value)?;
+                println!("Postings: {:?}", postings);
+                let mut iter = postings.iterator()?;
+                iter.sync_to(iter.current_document)?;
+                println!("Iterator: {:?}", iter);
+            }
+            IndexPartType::Lengths => {
+                let lengths = LengthsPostings::new(value)?;
+                println!("Lengths: {:?}", lengths);
+            }
+            _ => {
+                println!("Reader TODO for: {:?}", part_type);
+                break;
+            }
         }
-
     }
 
 

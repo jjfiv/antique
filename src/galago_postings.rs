@@ -3,6 +3,34 @@ use crate::io_helper::SliceInputStream;
 use crate::Error;
 use std::convert::TryInto;
 
+#[derive(Ord, PartialOrd, Eq, PartialEq, Debug, Clone, Copy)]
+pub enum IndexPartType {
+    Names,
+    NamesReverse,
+    Corpus,
+    Positions,
+    Lengths,
+}
+
+impl IndexPartType {
+    pub fn from_reader_class(class_name: &str) -> Result<IndexPartType, Error> {
+        Ok(match class_name {
+            "org.lemurproject.galago.core.index.disk.DiskLengthsReader" => IndexPartType::Lengths,
+            "org.lemurproject.galago.core.index.disk.PositionIndexReader" => IndexPartType::Positions,
+            _ => return Err(Error::MissingGalagoReader(class_name.to_string()))
+        })
+    }
+}
+
+pub struct DocId(u64);
+
+impl DocId {
+    pub fn from_names_entry(entry: ValueEntry) -> Result<DocId, Error> {
+        debug_assert_eq!(entry.len(), 8);
+        Ok(DocId(entry.stream().read_u64()?))
+    }
+}
+
 impl ValueEntry {
     fn stream(&self) -> SliceInputStream {
         SliceInputStream::new(&self.source[self.start..self.end])
@@ -38,9 +66,6 @@ pub struct LengthsPostings {
 }
 
 impl LengthsPostings {
-    pub fn is_appropriate(reader_class: &str) -> bool {
-        "org.lemurproject.galago.core.index.disk.DiskLengthsReader" == reader_class
-    }
     pub fn num_entries(&self) -> usize {
         (self.last_doc - self.first_doc + 1) as usize
     }
@@ -128,9 +153,6 @@ const HAS_MAXTF: u8 = 0b10;
 const HAS_INLINING: u8 = 0b100;
 
 impl PositionsPostings {
-    pub fn is_appropriate(reader_class: &str) -> bool {
-        "org.lemurproject.galago.core.index.disk.PositionIndexReader" == reader_class
-    }
     pub fn new(source: ValueEntry) -> Result<PositionsPostings, Error> {
         let mut reader = source.stream();
 
@@ -295,9 +317,6 @@ mod tests {
     fn test_load_lengths() {
         const TRUE_LENGTHS: &[u32] = &[1071, 887, 991, 19, 831, 1717];
         let reader = btree::read_info(&Path::new("data/index.galago/lengths")).unwrap();
-        assert!(LengthsPostings::is_appropriate(
-            &reader.manifest.reader_class
-        ));
         let lengths_entry = reader.find_str("document").unwrap().unwrap();
         let lengths = LengthsPostings::new(lengths_entry).unwrap();
         assert_eq!(lengths.to_vec(), TRUE_LENGTHS);
