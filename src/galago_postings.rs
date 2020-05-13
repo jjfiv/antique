@@ -389,4 +389,13 @@ mod tests {
         let fields = reader.collect_string_keys().unwrap();
         assert_eq!(fields, &["document".to_string()])
     }
+    
+    #[test]
+    fn test_load_all_doc_names() {
+        let reader = btree::read_info(&Path::new("data/index.galago/names.reverse")).unwrap();
+        let fields = reader.collect_string_keys().unwrap();
+        let mut names: Vec<String> = fields.into_iter().map(|path| Path::new(&path).file_name().unwrap().to_string_lossy().to_string()).collect();
+        names.sort();
+        assert_eq!(names, &["README.txt", "ch1.txt", "ch2.txt", "ch3.txt", "ch4.txt", "ch5.txt"])
+    }
 }
