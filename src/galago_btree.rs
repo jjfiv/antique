@@ -3,18 +3,22 @@ use crate::{Error, HashMap};
 use memmap::{Mmap, MmapOptions};
 use serde_json::Value;
 use std::fs::File;
-use std::sync::Arc;
+use std::sync::{Mutex, Arc};
 use std::{
     cmp,
     path::{Path, PathBuf},
     str,
 };
+use std::collections::hash_map::Entry;
+use crate::{DocId, galago_postings::IndexPartType};
 
 // Notes on the format:
 // Java's DataInputStream/DataOutputStream classes write data as big-endian.
 
 /// Last 8 bytes of the file should be this:
 const MAGIC_NUMBER: u64 = 0x1a2b3c4d5e6f7a8d;
+// For split.keys accompanying files:
+const VALUE_MAGIC_NUMBER: u64 = 0x2b3c4d5e6f7a8b9c;
 
 /// size_of(
 /// vocabulary_offset: u64
@@ -33,6 +37,8 @@ pub struct TreeReader {
     pub magic_number: u64,
     pub manifest: Manifest,
     pub vocabulary: Vocabulary,
+    /// These are opened lazily:
+    pub value_readers: Arc<Mutex<HashMap<u32, Arc<Mmap>>>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -72,7 +78,7 @@ pub struct Vocabulary {
 #[derive(Debug, Clone)]
 pub enum TreeLocation {
     SingleFile(PathBuf),
-    Split { keys: PathBuf },
+    SplitKeys(PathBuf),
 }
 
 impl TreeLocation {
@@ -80,7 +86,7 @@ impl TreeLocation {
         if path.is_dir() {
             let inner = path.join("split.keys");
             if inner.is_file() {
-                Ok(TreeLocation::Split { keys: inner })
+                Ok(TreeLocation::SplitKeys(inner))
             } else {
                 Err(Error::PathNotOK)
             }
@@ -91,13 +97,13 @@ impl TreeLocation {
     fn keys_path(&self) -> &Path {
         match self {
             TreeLocation::SingleFile(p) => &p,
-            TreeLocation::Split { keys, .. } => &keys,
+            TreeLocation::SplitKeys(keys) => &keys,
         }
     }
 }
 
 /// Is this a Galago Btree?
-pub fn file_matches(path: &Path) -> Result<bool, Error> {
+fn open_file_magic(path: &Path, magic: u64) -> Result<Mmap, Error> {
     // Step into split.keys if-need-be.
     let location = TreeLocation::new(path)?;
 
@@ -109,7 +115,11 @@ pub fn file_matches(path: &Path) -> Result<bool, Error> {
     let mut reader = SliceInputStream::new(&mmap[file_length - 8..]);
     // Last u64 in file should be:
     let maybe_magic = reader.read_u64()?;
-    Ok(maybe_magic == MAGIC_NUMBER)
+    if maybe_magic == magic {
+        Ok(mmap)
+    } else {
+        Err(Error::BadGalagoMagic(maybe_magic))
+    }
 }
 
 impl TreeReader {
@@ -133,6 +143,53 @@ impl TreeReader {
 
         Ok(output)
     }
+
+    fn index_part_type(&self) -> Result<IndexPartType, Error> {
+        return IndexPartType::from_reader_class(&self.manifest.reader_class)
+    }
+
+    fn read_name_to_id(&self) -> Result<HashMap<String, DocId>, Error> {
+        match self.index_part_type()? {
+            IndexPartType::NamesReverse => {},
+            other => panic!("Don't call read_name_to_id on {:?}", other)
+        }
+        
+        let mut output = HashMap::default();
+        output.reserve(self.manifest.key_count as usize);
+
+        let source = self.mmap.clone();
+        let mut key_buffer = Vec::new();
+        for block in self.vocabulary.blocks.iter() {
+            let mut block_iter = block.iterator(&self.mmap, &mut key_buffer)?;
+            while let Some(entry) = block_iter.read_next(&mut key_buffer)? {
+                let mut reader = SliceInputStream::new(&source[entry.start..entry.end]);
+                let docid = DocId(reader.read_u64()?);
+                output.insert(str::from_utf8(&key_buffer)?.to_owned(), docid);
+            }
+        }
+
+        Ok(output)
+    }
+
+    fn get_value_source(&self, index: u32) -> Result<Arc<Mmap>, Error> {
+        Ok(match &self.location {
+            TreeLocation::SingleFile(_) => self.mmap.clone(),
+            TreeLocation::SplitKeys(path) => {
+                let mut value_readers = self.value_readers.lock().map_err(|_| Error::ThreadFailure)?;
+                let source: Arc<Mmap> = match value_readers.entry(index) {
+                    Entry::Occupied(source) => source.get().clone(),
+                    Entry::Vacant(entry) => if let Some(dir) = path.parent() {
+                        let other_file = dir.join(format!("{}", index));
+                        let mmap: Mmap = open_file_magic(&other_file, VALUE_MAGIC_NUMBER)?;
+                        entry.insert(Arc::new(mmap)).clone()
+                    } else {
+                        return Err(Error::MissingSplitFiles)
+                    }
+                };
+                source
+            }
+        })
+    }
 }
 
 /// Read footer:
@@ -140,9 +197,7 @@ pub fn read_info(path: &Path) -> Result<TreeReader, Error> {
     let location = TreeLocation::new(path)?;
 
     // Use Memory-Mapped I/O:
-    let file = File::open(location.keys_path())?;
-    let opts = MmapOptions::new();
-    let mmap: Mmap = unsafe { opts.map(&file)? };
+    let mmap: Mmap = open_file_magic(location.keys_path(), MAGIC_NUMBER)?;
     let file_length = mmap.len();
 
     let footer_start = file_length - FOOTER_SIZE;
@@ -154,6 +209,7 @@ pub fn read_info(path: &Path) -> Result<TreeReader, Error> {
     let magic_number = reader.read_u64()?;
     debug_assert!(reader.eof());
 
+    // We already checked this while opening, but w/e.
     if magic_number != MAGIC_NUMBER {
         return Err(Error::BadGalagoMagic(magic_number));
     }
@@ -167,6 +223,8 @@ pub fn read_info(path: &Path) -> Result<TreeReader, Error> {
     let mut vocab = SliceInputStream::new(&mmap[vocab_start..vocab_end]);
     let vocabulary = read_vocabulary(&mut vocab, value_data_end)?;
 
+    let value_readers = Arc::new(Mutex::new(HashMap::<u32,_>::default()));
+
     Ok(TreeReader {
         mmap: Arc::new(mmap),
         location,
@@ -174,6 +232,7 @@ pub fn read_info(path: &Path) -> Result<TreeReader, Error> {
         magic_number,
         manifest,
         vocabulary,
+        value_readers,
     })
 }
 
@@ -225,11 +284,28 @@ impl TreeReader {
 
         while let Some(found) = iter.read_next(&mut key_buffer)? {
             if key == key_buffer.as_slice() {
-                return Ok(Some(ValueEntry {
-                    source: self.mmap.clone(),
-                    start: found.start, 
-                    end: found.end
-                }));
+                match &self.location {
+                    TreeLocation::SingleFile(_) => {
+                        return Ok(Some(ValueEntry {
+                            source: self.mmap.clone(),
+                            start: found.start,
+                            end: found.end,
+                        }));
+                    }
+                    TreeLocation::SplitKeys(_) => {
+                        let mut reader = SliceInputStream::new(&self.mmap[found.start..found.end]);
+                        let file_id = reader.read_u32()?;
+                        let start = reader.read_u64()? as usize;
+                        let length = reader.read_u64()? as usize;
+                        let source = self.get_value_source(file_id)?;
+                        return Ok(Some(ValueEntry {
+                            source,
+                            start,
+                            end: start + length,
+                        }))
+                    }
+                };
+                
             } else if key_buffer.as_slice() > key {
                 break;
             }
@@ -289,7 +365,8 @@ impl<'src> VocabularyBlockIter<'src> {
             self.key_index += 1;
 
             Ok(Some(VocabIterValue {
-                start, end: self.last_end
+                start,
+                end: self.last_end,
             }))
         } else {
             Ok(None)
@@ -298,7 +375,11 @@ impl<'src> VocabularyBlockIter<'src> {
 }
 
 impl VocabularyBlock {
-    fn iterator<'src, 'b>(&self, source: &'src Mmap, key_buffer: &'b mut Vec<u8>) -> Result<VocabularyBlockIter<'src>, Error> {
+    fn iterator<'src, 'b>(
+        &self,
+        source: &'src Mmap,
+        key_buffer: &'b mut Vec<u8>,
+    ) -> Result<VocabularyBlockIter<'src>, Error> {
         // Now the format is defined in DiskBTreeIterator.cacheKeys...
         let value_start = self.begin + (self.header_length as usize);
         // loadBlockHeader:
@@ -313,7 +394,7 @@ impl VocabularyBlock {
         let end_value_offset = header.read_vbyte()? as usize;
         let last_end = self.end - end_value_offset;
         key_buffer.extend_from_slice(first_key);
-        
+
         Ok(VocabularyBlockIter {
             stream: header,
             value_end: self.end,
@@ -323,9 +404,8 @@ impl VocabularyBlock {
             first: Some(VocabIterValue {
                 start: value_start,
                 end: last_end,
-            })
+            }),
         })
-
     }
 }
 
@@ -363,12 +443,6 @@ mod tests {
 
     fn read_path(input: &str) -> Result<bool, Error> {
         let path = Path::new(&input);
-
-        if !file_matches(&path)? {
-            println!("{} is NOT a galago btree!", input);
-            return Ok(false);
-        }
-        println!("{} is a galago_btree!", input);
 
         let reader = read_info(&path)?;
         println!("Manifest: {:?}", reader.manifest);
@@ -433,5 +507,24 @@ mod tests {
         let the_entry = reader.find_str("the").unwrap().unwrap();
         let chapter_entry = reader.find_str("chapter").unwrap().unwrap();
         assert!(the_entry.end - the_entry.start > chapter_entry.end - chapter_entry.start);
+    }
+        
+    // Galago bakes absolute paths into everything:
+    const PREFIX: &str = "/home/jfoley/antique";
+
+    #[test]
+    fn corpus_has_all_files() {
+        let reader = read_info(&Path::new("data/index.galago/names.reverse")).unwrap();
+        let keys = reader.read_name_to_id().unwrap();
+
+        let corpus = read_info(&Path::new("data/index.galago/corpus")).unwrap();
+        for (name, doc) in keys.iter() {
+            assert!(name.starts_with(PREFIX));
+            let rel_path = Path::new(&name[PREFIX.len()..]);
+            let repr = doc.to_be_bytes();
+
+            let stored = corpus.find_bytes(&repr).unwrap().unwrap();
+            println!("{:?} -> {:?}", rel_path, stored);
+        }
     }
 }

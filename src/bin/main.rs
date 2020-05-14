@@ -14,12 +14,6 @@ fn main() -> Result<(), Error> {
         .unwrap_or_else(|| "data/index.galago/lengths".to_string());
     let path = Path::new(&input);
 
-    if !btree::file_matches(&path)? {
-        println!("{} is NOT a galago btree!", input);
-        return Ok(());
-    }
-    println!("{} is a galago_btree!", input);
-
     let reader = btree::read_info(&path)?;
     println!("Location: {:?}", reader.location);
     println!("Manifest: {:?}", reader.manifest);

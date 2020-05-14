@@ -14,6 +14,8 @@ use std::{str::Utf8Error, io};
 #[derive(Debug)]
 pub enum Error {
     PathNotOK,
+    MissingSplitFiles,
+    ThreadFailure,
     IO(io::Error),
     BadGalagoMagic(u64),
     BadManifest(serde_json::Error),
@@ -51,5 +53,8 @@ impl DocId {
     }
     pub fn no_more() -> DocId {
         DocId(std::u64::MAX)
+    }
+    pub fn to_be_bytes(&self) -> [u8; 8] {
+        self.0.to_be_bytes()
     }
 }
