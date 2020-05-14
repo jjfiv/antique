@@ -10,6 +10,17 @@ pub trait Movement {
     fn move_past(&mut self) -> Result<DocId, Error>;
 }
 
+pub trait ScoreEval {
+    fn score(&mut self, doc: DocId) -> Option<f32>;
+}
+pub trait LengthsEval {
+    fn length(&mut self, doc: DocId) -> Option<u32>;
+}
+pub trait TermEval {
+    fn count(&mut self, doc: DocId) -> Option<u32>;
+    fn positions(&mut self, doc: DocId) -> Option<&[u32]>;
+}
+
 impl<T> Movement for T
 where
     T: SyncTo,

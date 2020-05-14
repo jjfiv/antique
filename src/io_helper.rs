@@ -41,7 +41,52 @@ impl fmt::Debug for Bytes {
         }
     }
 }
+pub trait InputStream {
+    fn tell(&self) -> usize;
+    fn eof(&self) -> bool;
+    fn advance(&mut self, n: usize) -> Result<&[u8], Error>;
+    fn get(&mut self) -> Result<u8, Error>;
+}
 
+pub trait DataInputStream {
+    fn read_vbyte(&mut self) -> Result<u64, Error>;
+    fn read_u64(&mut self) -> Result<u64, Error>;
+    fn read_u32(&mut self) -> Result<u32, Error>;
+}
+
+impl<I> DataInputStream for I
+where
+    I: InputStream,
+{
+    fn read_vbyte(&mut self) -> Result<u64, Error> {
+        let mut result: u64 = 0;
+        let mut bit_p: u8 = 0;
+        while !self.eof() {
+            // read_byte:
+            let byte = self.get()? as u64;
+            println!("byte={}", byte);
+
+            // if highest bit set we're done!
+            if byte & 0x80 > 0 {
+                result |= (byte & 0x7f) << bit_p;
+                return Ok(result);
+            }
+            result |= byte << bit_p;
+            bit_p += 7;
+        }
+        Err(Error::InternalSizeErr)
+    }
+    fn read_u64(&mut self) -> Result<u64, Error> {
+        let exact = self.advance(8)?;
+        Ok(u64::from_be_bytes(exact.try_into().unwrap()))
+    }
+    fn read_u32(&mut self) -> Result<u32, Error> {
+        let exact = self.advance(4)?;
+        Ok(u32::from_be_bytes(exact.try_into().unwrap()))
+    }
+}
+
+// Zero-Copy InputStream
 #[derive(Clone)]
 pub struct SliceInputStream<'src> {
     data: &'src [u8],
@@ -60,15 +105,30 @@ impl fmt::Debug for SliceInputStream<'_> {
     }
 }
 
+impl<'src> InputStream for SliceInputStream<'src> {
+    fn tell(&self) -> usize {
+        self.position
+    }
+    fn eof(&self) -> bool {
+        self.position >= self.data.len()
+    }
+    fn advance(&mut self, n: usize) -> Result<&[u8], Error> {
+        self.consume(n)
+    }
+    fn get(&mut self) -> Result<u8, Error> {
+        if self.position >= self.data.len() {
+            Err(Error::InternalSizeErr)
+        } else {
+            let result = Ok(self.data[self.position]);
+            self.position += 1;
+            result
+        }
+    }
+}
+
 impl<'src> SliceInputStream<'src> {
     pub fn new(data: &'src [u8]) -> Self {
         Self { data, position: 0 }
-    }
-    pub fn tell(&self) -> usize {
-        self.position
-    }
-    pub fn eof(&self) -> bool {
-        self.position >= self.data.len()
     }
     pub fn seek(&mut self, position: usize) -> Result<(), Error> {
         self.position = position;
@@ -88,34 +148,57 @@ impl<'src> SliceInputStream<'src> {
         self.position = end;
         Ok(found)
     }
-    pub fn read_vbyte(&mut self) -> Result<u64, Error> {
-        let mut result: u64 = 0;
-        let mut bit_p: u8 = 0;
-        while self.position < self.data.len() {
-            // read_byte:
-            let byte = self.data[self.position] as u64;
-            self.position += 1;
-
-            // if highest bit set we're done!
-            if byte & 0x80 > 0 {
-                result |= (byte & 0x7f) << bit_p;
-                return Ok(result);
-            }
-            result |= byte << bit_p;
-            bit_p += 7;
-        }
-        Err(Error::InternalSizeErr)
-    }
     pub fn read_bytes(&mut self, n: usize) -> Result<&'src [u8], Error> {
         Ok(self.consume(n)?)
     }
-    pub fn read_u64(&mut self) -> Result<u64, Error> {
-        let exact = self.consume(8)?;
-        Ok(u64::from_be_bytes(exact.try_into().unwrap()))
+}
+
+use memmap::Mmap;
+use std::sync::Arc;
+
+#[derive(Debug, Clone)]
+pub struct ArcInputStream {
+    source: Arc<Mmap>,
+    start: usize,
+    end: usize,
+    offset: usize,
+}
+
+impl ArcInputStream {
+    pub fn new(source: Arc<Mmap>, start: usize, end: usize) -> Self {
+        Self {
+            source,
+            start,
+            end,
+            offset: 0,
+        }
     }
-    pub fn read_u32(&mut self) -> Result<u32, Error> {
-        let exact = self.consume(4)?;
-        Ok(u32::from_be_bytes(exact.try_into().unwrap()))
+}
+
+impl InputStream for ArcInputStream {
+    fn tell(&self) -> usize {
+        self.offset
+    }
+    fn eof(&self) -> bool {
+        self.offset + self.start >= self.end
+    }
+    fn advance(&mut self, n: usize) -> Result<&[u8], Error> {
+        let lhs = self.start + self.offset;
+        let rhs = lhs + n;
+        self.offset += n;
+        if rhs > self.end {
+            return Err(Error::InternalSizeErr);
+        }
+        Ok(&self.source[lhs..rhs])
+    }
+    fn get(&mut self) -> Result<u8, Error> {
+        if self.eof() {
+            Err(Error::InternalSizeErr)
+        } else {
+            let b = self.source[self.start + self.offset];
+            self.offset += 1;
+            Ok(b)
+        }
     }
 }
 

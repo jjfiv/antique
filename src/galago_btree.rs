@@ -1,4 +1,4 @@
-use crate::io_helper::{Bytes, SliceInputStream};
+use crate::io_helper::{Bytes, SliceInputStream, InputStream, DataInputStream};
 use crate::{galago_postings::IndexPartType, DocId};
 use crate::{Error, HashMap};
 use memmap::{Mmap, MmapOptions};

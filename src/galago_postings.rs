@@ -1,6 +1,6 @@
 use crate::galago_btree::ValueEntry;
-use crate::io_helper::SliceInputStream;
-use crate::scoring::SyncTo;
+use crate::io_helper::{ArcInputStream, SliceInputStream, DataInputStream, InputStream};
+use crate::scoring::{TermEval, LengthsEval, SyncTo};
 use crate::{DocId, Error};
 use std::convert::TryInto;
 
@@ -41,7 +41,7 @@ impl ValueEntry {
     pub(crate) fn stream(&self) -> SliceInputStream {
         SliceInputStream::new(&self.source[self.start..self.end])
     }
-    pub(crate) fn substream(&self, start_end: (usize, usize)) -> SliceInputStream {
+    pub(crate) fn substream(&self, start_end: (usize, usize)) -> ArcInputStream {
         let (start, end) = start_end;
         let sub_start = self.start + start;
         let sub_end = self.start + end;
@@ -53,7 +53,7 @@ impl ValueEntry {
         debug_assert!(sub_start < self.end);
         debug_assert!(sub_end > self.start);
         debug_assert!(sub_end <= self.end);
-        SliceInputStream::new(&self.source[sub_start..sub_end])
+        ArcInputStream::new(self.source.clone(), sub_start, sub_end)
     }
 }
 
@@ -74,17 +74,6 @@ pub struct LengthsPostings {
 impl LengthsPostings {
     pub fn num_entries(&self) -> usize {
         (self.last_doc.0 - self.first_doc.0 + 1) as usize
-    }
-    pub fn length(&self, docid: DocId) -> Option<u32> {
-        if docid < self.first_doc || docid > self.last_doc {
-            return None;
-        }
-        let offset = ((docid.0 - self.first_doc.0) * 4) as usize;
-        let begin = self.values_offset + offset + self.source.start;
-        self.source.source[begin..begin + 4]
-            .try_into()
-            .ok()
-            .map(|it| u32::from_be_bytes(it))
     }
     pub fn to_vec(&self) -> Vec<u32> {
         let begin = self.values_offset + self.source.start;
@@ -121,6 +110,20 @@ impl LengthsPostings {
     }
 }
 
+impl LengthsEval for LengthsPostings {
+    fn length(&mut self, doc: DocId) -> Option<u32> {
+        if doc < self.first_doc || doc > self.last_doc {
+            return None;
+        }
+        let offset = ((doc.0 - self.first_doc.0) * 4) as usize;
+        let begin = self.values_offset + offset + self.source.start;
+        self.source.source[begin..begin + 4]
+            .try_into()
+            .ok()
+            .map(|it| u32::from_be_bytes(it))
+    }
+}
+
 /// Note that this resembles: PositionIndexExtentSource.java from Galago, but we don't support skips.
 /// I couldn't find any indexes in-the-wild (on CIIR servers) that actually had them for testing.
 /// So I decided to ditch the un-tested code rather than pursue generating an index with them.
@@ -138,11 +141,11 @@ pub struct PositionsPostings {
 
 /// Represent a positions iterator.
 #[derive(Debug)]
-pub struct PositionsPostingsIter<'p> {
-    postings: &'p PositionsPostings,
-    documents: SliceInputStream<'p>,
-    counts: SliceInputStream<'p>,
-    positions: SliceInputStream<'p>,
+pub struct PositionsPostingsIter {
+    postings: PositionsPostings,
+    documents: ArcInputStream,
+    counts: ArcInputStream,
+    positions: ArcInputStream,
     document_index: u64,
     pub current_document: DocId,
     current_count: u32,
@@ -217,13 +220,13 @@ impl PositionsPostings {
             positions,
         })
     }
-    pub fn iterator(&self) -> Result<PositionsPostingsIter, Error> {
+    pub fn iterator(self) -> Result<PositionsPostingsIter, Error> {
         let postings = self;
         let mut iter = PositionsPostingsIter {
-            postings,
             documents: postings.source.substream(postings.documents),
             counts: postings.source.substream(postings.counts),
             positions: postings.source.substream(postings.positions),
+            postings,
             positions_byte_size: 0,
             current_count: 0,
             current_document: DocId(0),
@@ -237,7 +240,7 @@ impl PositionsPostings {
     }
 }
 
-impl<'p> PositionsPostingsIter<'p> {
+impl PositionsPostingsIter {
     /// Some positions arrays are prefixed with their length, but it depends on their size.
     /// If "inlining" was turned of while writing, they're all NOT prefixed with their length, even if many many positions to load/skip.
     fn current_positions_has_length(&self) -> bool {
@@ -263,7 +266,7 @@ impl<'p> PositionsPostingsIter<'p> {
 
         if !self.positions_loaded {
             if self.current_positions_has_length() {
-                let _ = self.positions.consume(self.positions_byte_size)?;
+                let _ = self.positions.advance(self.positions_byte_size)?;
             } else {
                 // skip positions, the hard way.
                 for _ in 0..self.current_count {
@@ -314,7 +317,7 @@ impl<'p> PositionsPostingsIter<'p> {
 }
 
 /// Implementing SyncTo to get nice movement functions.
-impl<'p> SyncTo for PositionsPostingsIter<'p> {
+impl SyncTo for PositionsPostingsIter {
     fn current_document(&self) -> DocId {
         self.current_document
     }
@@ -330,6 +333,24 @@ impl<'p> SyncTo for PositionsPostingsIter<'p> {
 
         Ok(self.current_document)
     }
+}
+
+impl TermEval for PositionsPostingsIter {
+    fn count(&mut self, doc: DocId) -> Option<u32> {
+        if doc != self.current_document {
+            None
+        } else {
+            Some(self.current_count)
+        }
+    }
+    fn positions(&mut self, doc: DocId) -> Option<&[u32]> {
+        if doc != self.current_document {
+            None
+        } else {
+            self.get_positions().ok()
+        }
+    }
+    
 }
 
 #[cfg(test)]
@@ -372,9 +393,12 @@ mod tests {
         const TRUE_LENGTHS: &[u32] = &[1071, 887, 991, 19, 831, 1717];
         let reader = btree::read_info(&Path::new("data/index.galago/lengths")).unwrap();
         let lengths_entry = reader.find_str("document").unwrap().unwrap();
-        let lengths = LengthsPostings::new(lengths_entry).unwrap();
+        let mut lengths = LengthsPostings::new(lengths_entry).unwrap();
         assert_eq!(lengths.to_vec(), TRUE_LENGTHS);
         assert_eq!(lengths.length(DocId(3)), Some(19));
+        assert_eq!(lengths.length(DocId(0)), Some(1071));
+        assert_eq!(lengths.length(DocId(5)), Some(1717));
+        assert_eq!(lengths.length(DocId(6)), None);
         assert_eq!(lengths.max_length, 1717);
         assert_eq!(lengths.min_length, 19);
         let sum = TRUE_LENGTHS.iter().map(|l| *l as u64).sum::<u64>();
