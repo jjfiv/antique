@@ -3,11 +3,14 @@ use std::convert::TryInto;
 use std::fmt;
 use std::{cmp::Ordering, str};
 
-#[derive(Clone)]
+#[derive(Hash,Eq,PartialEq,Clone)]
 pub struct Bytes {
     pub data: Box<[u8]>,
 }
 impl Bytes {
+    pub fn len(&self) -> usize {
+        return self.data.len()
+    }
     /// I think this is the only way to get a boxed slice...
     /// Someday, bumpalo these?
     pub fn from_slice(input: &[u8]) -> Self {

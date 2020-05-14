@@ -220,7 +220,7 @@ public final class TagTokenizerParser implements DocumentBuilder {
 
 		// 2. read attr pairs
 		i = TagTokenizerUtil.indexOfNonSpace(text, i);
-		int tagEnd = text.indexOf(">", i + 1);
+		final int tagEnd = text.indexOf(">", i + 1);
 		boolean closeIt = false;
 
 		HashMap<String, String> attributes = new HashMap<>();
@@ -242,7 +242,7 @@ public final class TagTokenizerParser implements DocumentBuilder {
 			}
 
 			int end = TagTokenizerUtil.indexOfEndAttribute(text, start, tagEnd);
-			int equals = TagTokenizerUtil.indexOfEquals(text, start, end);
+			final int equals = TagTokenizerUtil.indexOfEquals(text, start, end);
 
 			// try to find an equals sign
 			if (equals < 0 || equals == start || end == equals) {

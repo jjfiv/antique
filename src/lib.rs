@@ -1,3 +1,4 @@
+pub mod galago_tokenizer;
 pub mod galago_btree;
 pub mod galago_postings;
 pub mod io_helper;
@@ -7,6 +8,7 @@ pub mod scoring;
 extern crate serde_derive;
 
 use fnv::FnvHashMap as HashMap;
+use fnv::FnvHashSet as HashSet;
 use std::{str::Utf8Error, io};
 
 #[derive(Debug)]
