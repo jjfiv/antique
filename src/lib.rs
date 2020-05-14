@@ -1,7 +1,4 @@
-pub mod corpus;
-pub mod galago_btree;
-pub mod galago_postings;
-pub mod galago_tokenizer;
+pub mod galago;
 pub mod io_helper;
 pub mod scoring;
 

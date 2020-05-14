@@ -1,5 +1,5 @@
 use crate::io_helper::{Bytes, DataInputStream, InputStream, SliceInputStream};
-use crate::{galago_postings::IndexPartType, DocId};
+use crate::{galago::postings::IndexPartType, DocId};
 use crate::{Error, HashMap};
 use memmap::{Mmap, MmapOptions};
 use serde_json::Value;
@@ -144,11 +144,11 @@ impl TreeReader {
         Ok(output)
     }
 
-    fn index_part_type(&self) -> Result<IndexPartType, Error> {
+    pub(crate) fn index_part_type(&self) -> Result<IndexPartType, Error> {
         return IndexPartType::from_reader_class(&self.manifest.reader_class);
     }
 
-    fn read_name_to_id(&self) -> Result<HashMap<String, DocId>, Error> {
+    pub(crate) fn read_name_to_id(&self) -> Result<HashMap<String, DocId>, Error> {
         match self.index_part_type()? {
             IndexPartType::NamesReverse => {}
             other => panic!("Don't call read_name_to_id on {:?}", other),
@@ -515,8 +515,8 @@ mod tests {
 
     // Galago bakes absolute paths into everything:
     const PREFIX: &str = "/home/jfoley/antique";
-    use crate::corpus::decompress_document;
-    use crate::galago_tokenizer::State as Tokenizer;
+    use crate::galago::corpus::decompress_document;
+    use crate::galago::tokenizer::State as Tokenizer;
 
     use crate::HashSet;
     use std::fs;

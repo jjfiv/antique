@@ -1,4 +1,4 @@
-use crate::galago_btree::ValueEntry;
+use crate::galago::btree::ValueEntry;
 use crate::io_helper::{ArcInputStream, DataInputStream, InputStream, SliceInputStream};
 use crate::scoring::{EvalNode, SyncTo};
 use crate::{DocId, Error};
@@ -16,7 +16,7 @@ pub enum IndexPartType {
 impl IndexPartType {
     #[cfg(test)]
     fn from_file(path: &str) -> Result<IndexPartType, Error> {
-        use crate::galago_btree::TreeReader;
+        use crate::galago::btree::TreeReader;
         use std::path::Path;
         let reader = TreeReader::new(Path::new(path))?;
         Self::from_reader_class(&reader.manifest.reader_class)
@@ -376,7 +376,7 @@ impl EvalNode for PositionsPostingsIter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::galago_btree as btree;
+    use crate::galago::btree as btree;
     use crate::scoring::Movement;
     use std::path::Path;
 

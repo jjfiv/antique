@@ -1,5 +1,5 @@
-use crate::galago_btree::ValueEntry;
-use crate::galago_tokenizer::{Document, State as Tokenizer};
+use crate::galago::btree::ValueEntry;
+use crate::galago::tokenizer::{Document, State as Tokenizer};
 use crate::io_helper::*;
 use crate::Error;
 use crate::HashSet;
