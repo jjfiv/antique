@@ -16,7 +16,7 @@ use std::{
 // Java's DataInputStream/DataOutputStream classes write data as big-endian.
 
 /// Last 8 bytes of the file should be this:
-const MAGIC_NUMBER: u64 = 0x1a2b3c4d5e6f7a8d;
+pub(crate) const MAGIC_NUMBER: u64 = 0x1a2b3c4d5e6f7a8d;
 // For split.keys accompanying files:
 const VALUE_MAGIC_NUMBER: u64 = 0x2b3c4d5e6f7a8b9c;
 
@@ -82,7 +82,7 @@ pub enum TreeLocation {
 }
 
 impl TreeLocation {
-    fn new(path: &Path) -> Result<TreeLocation, Error> {
+    pub(crate) fn new(path: &Path) -> Result<TreeLocation, Error> {
         if path.is_dir() {
             let inner = path.join("split.keys");
             if inner.is_file() {
@@ -103,7 +103,7 @@ impl TreeLocation {
 }
 
 /// Is this a Galago Btree?
-fn open_file_magic(path: &Path, magic: u64) -> Result<Mmap, Error> {
+pub(crate) fn open_file_magic(path: &Path, magic: u64) -> Result<Mmap, Error> {
     // Step into split.keys if-need-be.
     let location = TreeLocation::new(path)?;
 
@@ -144,11 +144,11 @@ impl TreeReader {
         Ok(output)
     }
 
-    pub(crate) fn index_part_type(&self) -> Result<IndexPartType, Error> {
+    pub fn index_part_type(&self) -> Result<IndexPartType, Error> {
         return IndexPartType::from_reader_class(&self.manifest.reader_class);
     }
 
-    pub(crate) fn read_name_to_id(&self) -> Result<HashMap<String, DocId>, Error> {
+    pub fn read_name_to_id(&self) -> Result<HashMap<String, DocId>, Error> {
         match self.index_part_type()? {
             IndexPartType::NamesReverse => {}
             other => panic!("Don't call read_name_to_id on {:?}", other),

@@ -7,7 +7,7 @@ extern crate serde_derive;
 
 use fnv::FnvHashMap as HashMap;
 use fnv::FnvHashSet as HashSet;
-use std::{io, str::Utf8Error};
+use std::{ffi::OsString, io, str::Utf8Error};
 
 #[derive(Debug)]
 pub enum Error {
@@ -16,6 +16,7 @@ pub enum Error {
     ThreadFailure,
     CompressionError,
     IO(io::Error),
+    BadFileName(OsString),
     BadGalagoMagic(u64),
     BadManifest(serde_json::Error),
     InternalSizeErr,

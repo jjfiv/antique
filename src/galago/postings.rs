@@ -376,7 +376,7 @@ impl EvalNode for PositionsPostingsIter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::galago::btree as btree;
+    use crate::galago::btree;
     use crate::scoring::Movement;
     use std::path::Path;
 
