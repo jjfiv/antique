@@ -254,8 +254,11 @@ impl State {
         let mut input: Vec<char> = normalized.chars().collect();
 
         let mut start = 0;
-        while input[start] == '.' {
+        while start < input.len() && input[start] == '.' {
             start += 1;
+        }
+        if start >= input.len() {
+            return;
         }
         let mut end = orig_end;
         while input.last() == Some(&'.') {
@@ -263,6 +266,9 @@ impl State {
             end -= 1;
         }
         let relevant = &input[start..];
+        if relevant.len() == 0 {
+            return;
+        }
         let mut token: String = relevant.iter().collect();
         let start = start + orig_start;
         if token.contains('.') {

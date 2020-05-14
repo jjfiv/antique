@@ -516,6 +516,10 @@ mod tests {
     // Galago bakes absolute paths into everything:
     const PREFIX: &str = "/home/jfoley/antique";
     use crate::corpus::decompress_document;
+    use crate::galago_tokenizer::{State as Tokenizer};
+
+    use std::fs;
+    use crate::HashSet;
 
     #[test]
     fn corpus_has_all_files() {
@@ -525,13 +529,18 @@ mod tests {
         let corpus = read_info(&Path::new("data/index.galago/corpus")).unwrap();
         for (name, doc) in keys.iter() {
             assert!(name.starts_with(PREFIX));
-            let rel_path = Path::new(&name[PREFIX.len()..]);
+            let rel_path = Path::new(&name[PREFIX.len()+1..]);
+            println!("{:?}", rel_path);
             let repr = doc.to_be_bytes();
 
             let stored = corpus.find_bytes(&repr).unwrap().unwrap();
             let document = decompress_document(stored).unwrap();
 
-            println!("{:?} -> {}", rel_path, &document.text);
+            let expected = fs::read_to_string(rel_path).unwrap();
+            let mut tok = Tokenizer::new(&expected);
+            tok.parse();
+            let found = tok.into_document(HashSet::default());
+            assert_eq!(found, document);
         }
     }
 }
