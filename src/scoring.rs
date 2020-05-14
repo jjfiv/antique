@@ -1,17 +1,13 @@
 use crate::{DocId, Error};
 
-pub trait SyncTo {
-    fn current_document(&self) -> DocId;
-    fn sync_to(&mut self, document: DocId) -> Result<DocId, Error>;
-}
-
 pub trait Movement {
     fn is_done(&self) -> bool;
-    fn matches(&mut self, doc: DocId) -> Result<bool, Error>;
     fn move_past(&mut self) -> Result<DocId, Error>;
 }
 
 pub trait EvalNode {
+    fn current_document(&self) -> DocId;
+    fn sync_to(&mut self, document: DocId) -> Result<DocId, Error>;
     fn count(&mut self, doc: DocId) -> u32;
     fn score(&mut self, doc: DocId) -> f32;
     fn matches(&mut self, doc: DocId) -> bool;
@@ -28,6 +24,12 @@ struct BM25Eval {
 }
 
 impl EvalNode for BM25Eval {
+    fn current_document(&self) -> DocId {
+        self.child.current_document()
+    }
+    fn sync_to(&mut self, document: DocId) -> Result<DocId, Error> {
+        self.child.sync_to(document)
+    }
     fn count(&mut self, _doc: DocId) -> u32 {
         todo!()
     }
@@ -54,6 +56,20 @@ struct WeightedSumEval {
 }
 
 impl EvalNode for WeightedSumEval {
+    fn current_document(&self) -> DocId {
+        self.children
+            .iter()
+            .map(|c| c.current_document())
+            .min()
+            .unwrap()
+    }
+    fn sync_to(&mut self, document: DocId) -> Result<DocId, Error> {
+        let mut min = DocId::no_more();
+        for c in self.children.iter_mut() {
+            min = std::cmp::min(c.sync_to(document)?, min);
+        }
+        Ok(min)
+    }
     fn count(&mut self, _doc: DocId) -> u32 {
         todo!()
     }
@@ -75,16 +91,13 @@ impl EvalNode for WeightedSumEval {
 
 impl<T> Movement for T
 where
-    T: SyncTo,
+    T: EvalNode,
 {
     fn is_done(&self) -> bool {
         self.current_document().is_done()
     }
     fn move_past(&mut self) -> Result<DocId, Error> {
         self.sync_to(DocId(self.current_document().0 + 1))
-    }
-    fn matches(&mut self, document: DocId) -> Result<bool, Error> {
-        self.sync_to(document).map(|d| d == document)
     }
 }
 
@@ -95,20 +108,5 @@ mod tests {
     struct VecMovement {
         position: usize,
         docs: Vec<u32>,
-    }
-    impl SyncTo for VecMovement {
-        fn current_document(&self) -> DocId {
-            if self.position < self.docs.len() {
-                DocId(self.docs[self.position] as u64)
-            } else {
-                DocId::no_more()
-            }
-        }
-        fn sync_to(&mut self, document: DocId) -> Result<DocId, Error> {
-            while self.current_document() < document {
-                self.position += 1;
-            }
-            Ok(self.current_document())
-        }
     }
 }

@@ -55,6 +55,7 @@ pub struct Manifest {
     pub reader_class: String,
     writer_class: Option<String>,
     merger_class: Option<String>,
+    pub stemmer: Option<String>,
     pub key_count: u64,
     #[serde(flatten)]
     extra: HashMap<String, Value>,
@@ -94,7 +95,7 @@ impl TreeLocation {
             Ok(TreeLocation::SingleFile(path.into()))
         }
     }
-    fn keys_path(&self) -> &Path {
+    pub(crate) fn keys_path(&self) -> &Path {
         match self {
             TreeLocation::SingleFile(p) => &p,
             TreeLocation::SplitKeys(keys) => &keys,
@@ -125,6 +126,14 @@ pub(crate) fn open_file_magic(path: &Path, magic: u64) -> Result<Mmap, Error> {
 impl TreeReader {
     pub fn new(path: &Path) -> Result<TreeReader, Error> {
         read_info(path)
+    }
+
+    pub fn file_name(&self) -> Result<&str, Error> {
+        self.location
+            .keys_path()
+            .file_name()
+            .and_then(|os_str| os_str.to_str())
+            .ok_or_else(|| Error::BadFileName(self.location.keys_path().into()))
     }
 
     /// WARNING: know what you're doing here.

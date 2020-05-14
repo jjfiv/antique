@@ -1,6 +1,9 @@
 pub mod galago;
 pub mod io_helper;
+pub mod lang;
+pub mod movement;
 pub mod scoring;
+pub mod stats;
 
 #[macro_use]
 extern crate serde_derive;
@@ -14,6 +17,8 @@ pub enum Error {
     PathNotOK,
     MissingSplitFiles,
     ThreadFailure,
+    UnknownStemmer(String),
+    UnknownIndexPart(String),
     CompressionError,
     IO(io::Error),
     BadFileName(OsString),
@@ -60,4 +65,12 @@ impl DocId {
     pub fn to_be_bytes(&self) -> [u8; 8] {
         self.0.to_be_bytes()
     }
+}
+
+/// Lucene does this really nice:
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Hash, Copy, Clone, Serialize, Deserialize)]
+pub enum DataNeeded {
+    Docs,
+    Counts,
+    Positions,
 }

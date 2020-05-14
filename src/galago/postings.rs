@@ -1,6 +1,6 @@
 use crate::galago::btree::ValueEntry;
 use crate::io_helper::{ArcInputStream, DataInputStream, InputStream, SliceInputStream};
-use crate::scoring::{EvalNode, SyncTo};
+use crate::scoring::{EvalNode, Movement};
 use crate::{DocId, Error};
 use std::convert::TryInto;
 
@@ -69,6 +69,7 @@ pub struct LengthsPostings {
     pub first_doc: DocId,
     pub last_doc: DocId,
     values_offset: usize,
+    current_document: DocId,
 }
 
 impl LengthsPostings {
@@ -105,12 +106,20 @@ impl LengthsPostings {
             min_length,
             first_doc,
             last_doc,
+            current_document: first_doc,
             values_offset,
         })
     }
 }
-
 impl EvalNode for LengthsPostings {
+    fn current_document(&self) -> DocId {
+        // We're basically never done?
+        self.current_document
+    }
+    fn sync_to(&mut self, document: DocId) -> Result<DocId, Error> {
+        self.current_document = document;
+        Ok(document)
+    }
     fn count(&mut self, doc: DocId) -> u32 {
         if doc < self.first_doc || doc > self.last_doc {
             return 0;
@@ -231,6 +240,17 @@ impl PositionsPostings {
             positions,
         })
     }
+    pub fn docs(self) -> Result<DocsIter, Error> {
+        let postings = self;
+        let mut documents = postings.source.substream(postings.documents);
+        let start = documents.read_vbyte()?;
+        Ok(DocsIter {
+            documents,
+            postings,
+            current_document: DocId(start),
+            document_index: 0,
+        })
+    }
     pub fn iterator(self) -> Result<PositionsPostingsIter, Error> {
         let postings = self;
         let mut iter = PositionsPostingsIter {
@@ -252,6 +272,9 @@ impl PositionsPostings {
 }
 
 impl PositionsPostingsIter {
+    pub fn new(value: ValueEntry) -> Result<Self, Error> {
+        PositionsPostings::new(value)?.iterator()
+    }
     /// Some positions arrays are prefixed with their length, but it depends on their size.
     /// If "inlining" was turned of while writing, they're all NOT prefixed with their length, even if many many positions to load/skip.
     fn current_positions_has_length(&self) -> bool {
@@ -260,9 +283,6 @@ impl PositionsPostingsIter {
         } else {
             false
         }
-    }
-    fn is_done(&self) -> bool {
-        self.current_document.is_done()
     }
     fn load_next_posting(&mut self) -> Result<(), Error> {
         if self.document_index >= self.postings.document_count {
@@ -327,8 +347,7 @@ impl PositionsPostingsIter {
     }
 }
 
-/// Implementing SyncTo to get nice movement functions.
-impl SyncTo for PositionsPostingsIter {
+impl EvalNode for PositionsPostingsIter {
     fn current_document(&self) -> DocId {
         self.current_document
     }
@@ -344,9 +363,6 @@ impl SyncTo for PositionsPostingsIter {
 
         Ok(self.current_document)
     }
-}
-
-impl EvalNode for PositionsPostingsIter {
     fn count(&mut self, doc: DocId) -> u32 {
         if doc != self.current_document {
             0
@@ -371,6 +387,53 @@ impl EvalNode for PositionsPostingsIter {
     //        self.get_positions().unwrap()
     //    }
     //}
+}
+
+pub struct DocsIter {
+    postings: PositionsPostings,
+    documents: ArcInputStream,
+    document_index: u64,
+    current_document: DocId,
+}
+impl DocsIter {
+    pub fn new(value: ValueEntry) -> Result<Self, Error> {
+        PositionsPostings::new(value)?.docs()
+    }
+}
+
+impl EvalNode for DocsIter {
+    fn current_document(&self) -> DocId {
+        self.current_document
+    }
+    fn sync_to(&mut self, document: DocId) -> Result<DocId, Error> {
+        // Linear search through the postings-list:
+        // Don't have to check for done here because of u64::max trick.
+        while document > self.current_document && self.document_index < self.postings.document_count
+        {
+            self.document_index += 1;
+            if self.document_index >= self.postings.document_count {
+                self.current_document = DocId::no_more();
+                break;
+            }
+
+            // Step forward:
+            self.current_document.0 += self.documents.read_vbyte()?;
+        }
+
+        Ok(self.current_document)
+    }
+    fn count(&mut self, doc: DocId) -> u32 {
+        todo!()
+    }
+    fn score(&mut self, doc: DocId) -> f32 {
+        todo!()
+    }
+    fn matches(&mut self, doc: DocId) -> bool {
+        todo!()
+    }
+    fn estimate_df(&self) -> u64 {
+        self.postings.document_count
+    }
 }
 
 #[cfg(test)]
