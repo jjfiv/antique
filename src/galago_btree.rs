@@ -540,6 +540,8 @@ mod tests {
             let mut tok = Tokenizer::new(&expected);
             tok.parse();
             let found = tok.into_document(HashSet::default());
+            assert_eq!(found.text, document.text);
+            assert_eq!(found.terms, document.terms);
             assert_eq!(found, document);
         }
     }
