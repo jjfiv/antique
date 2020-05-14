@@ -3,13 +3,13 @@ use std::convert::TryInto;
 use std::fmt;
 use std::{cmp::Ordering, str};
 
-#[derive(Hash,Eq,PartialEq,Clone)]
+#[derive(Hash, Eq, PartialEq, Clone)]
 pub struct Bytes {
     pub data: Box<[u8]>,
 }
 impl Bytes {
     pub fn len(&self) -> usize {
-        return self.data.len()
+        return self.data.len();
     }
     /// I think this is the only way to get a boxed slice...
     /// Someday, bumpalo these?
@@ -51,7 +51,12 @@ pub struct SliceInputStream<'src> {
 
 impl fmt::Debug for SliceInputStream<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SliceInputStream[@{}..{}]", self.position, self.data.len())
+        write!(
+            f,
+            "SliceInputStream[@{}..{}]",
+            self.position,
+            self.data.len()
+        )
     }
 }
 

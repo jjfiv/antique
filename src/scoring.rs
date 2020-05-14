@@ -10,19 +10,22 @@ pub trait Movement {
     fn move_past(&mut self) -> Result<DocId, Error>;
 }
 
-impl<T> Movement for T where T: SyncTo {
+impl<T> Movement for T
+where
+    T: SyncTo,
+{
     fn is_done(&self) -> bool {
         self.current_document().is_done()
     }
     fn move_past(&mut self) -> Result<DocId, Error> {
-        self.sync_to(DocId(self.current_document().0+1))
+        self.sync_to(DocId(self.current_document().0 + 1))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     struct VecMovement {
         position: usize,
         docs: Vec<u32>,
@@ -42,6 +45,4 @@ mod tests {
             Ok(self.current_document())
         }
     }
-
-
 }

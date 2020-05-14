@@ -1,6 +1,7 @@
-pub mod galago_tokenizer;
+pub mod corpus;
 pub mod galago_btree;
 pub mod galago_postings;
+pub mod galago_tokenizer;
 pub mod io_helper;
 pub mod scoring;
 
@@ -9,13 +10,14 @@ extern crate serde_derive;
 
 use fnv::FnvHashMap as HashMap;
 use fnv::FnvHashSet as HashSet;
-use std::{str::Utf8Error, io};
+use std::{io, str::Utf8Error};
 
 #[derive(Debug)]
 pub enum Error {
     PathNotOK,
     MissingSplitFiles,
     ThreadFailure,
+    CompressionError,
     IO(io::Error),
     BadGalagoMagic(u64),
     BadManifest(serde_json::Error),
@@ -26,7 +28,10 @@ pub enum Error {
 }
 
 impl Error {
-    pub fn with_context<S>(self, msg: S) -> Error where S: Into<String> {
+    pub fn with_context<S>(self, msg: S) -> Error
+    where
+        S: Into<String>,
+    {
         Error::Context(msg.into(), Box::new(self))
     }
 }

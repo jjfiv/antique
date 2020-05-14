@@ -1,16 +1,16 @@
 use crate::io_helper::{Bytes, SliceInputStream};
+use crate::{galago_postings::IndexPartType, DocId};
 use crate::{Error, HashMap};
 use memmap::{Mmap, MmapOptions};
 use serde_json::Value;
+use std::collections::hash_map::Entry;
 use std::fs::File;
-use std::sync::{Mutex, Arc};
+use std::sync::{Arc, Mutex};
 use std::{
     cmp,
     path::{Path, PathBuf},
     str,
 };
-use std::collections::hash_map::Entry;
-use crate::{DocId, galago_postings::IndexPartType};
 
 // Notes on the format:
 // Java's DataInputStream/DataOutputStream classes write data as big-endian.
@@ -145,15 +145,15 @@ impl TreeReader {
     }
 
     fn index_part_type(&self) -> Result<IndexPartType, Error> {
-        return IndexPartType::from_reader_class(&self.manifest.reader_class)
+        return IndexPartType::from_reader_class(&self.manifest.reader_class);
     }
 
     fn read_name_to_id(&self) -> Result<HashMap<String, DocId>, Error> {
         match self.index_part_type()? {
-            IndexPartType::NamesReverse => {},
-            other => panic!("Don't call read_name_to_id on {:?}", other)
+            IndexPartType::NamesReverse => {}
+            other => panic!("Don't call read_name_to_id on {:?}", other),
         }
-        
+
         let mut output = HashMap::default();
         output.reserve(self.manifest.key_count as usize);
 
@@ -175,15 +175,20 @@ impl TreeReader {
         Ok(match &self.location {
             TreeLocation::SingleFile(_) => self.mmap.clone(),
             TreeLocation::SplitKeys(path) => {
-                let mut value_readers = self.value_readers.lock().map_err(|_| Error::ThreadFailure)?;
+                let mut value_readers = self
+                    .value_readers
+                    .lock()
+                    .map_err(|_| Error::ThreadFailure)?;
                 let source: Arc<Mmap> = match value_readers.entry(index) {
                     Entry::Occupied(source) => source.get().clone(),
-                    Entry::Vacant(entry) => if let Some(dir) = path.parent() {
-                        let other_file = dir.join(format!("{}", index));
-                        let mmap: Mmap = open_file_magic(&other_file, VALUE_MAGIC_NUMBER)?;
-                        entry.insert(Arc::new(mmap)).clone()
-                    } else {
-                        return Err(Error::MissingSplitFiles)
+                    Entry::Vacant(entry) => {
+                        if let Some(dir) = path.parent() {
+                            let other_file = dir.join(format!("{}", index));
+                            let mmap: Mmap = open_file_magic(&other_file, VALUE_MAGIC_NUMBER)?;
+                            entry.insert(Arc::new(mmap)).clone()
+                        } else {
+                            return Err(Error::MissingSplitFiles);
+                        }
                     }
                 };
                 source
@@ -223,7 +228,7 @@ pub fn read_info(path: &Path) -> Result<TreeReader, Error> {
     let mut vocab = SliceInputStream::new(&mmap[vocab_start..vocab_end]);
     let vocabulary = read_vocabulary(&mut vocab, value_data_end)?;
 
-    let value_readers = Arc::new(Mutex::new(HashMap::<u32,_>::default()));
+    let value_readers = Arc::new(Mutex::new(HashMap::<u32, _>::default()));
 
     Ok(TreeReader {
         mmap: Arc::new(mmap),
@@ -302,10 +307,9 @@ impl TreeReader {
                             source,
                             start,
                             end: start + length,
-                        }))
+                        }));
                     }
                 };
-                
             } else if key_buffer.as_slice() > key {
                 break;
             }
@@ -508,9 +512,10 @@ mod tests {
         let chapter_entry = reader.find_str("chapter").unwrap().unwrap();
         assert!(the_entry.end - the_entry.start > chapter_entry.end - chapter_entry.start);
     }
-        
+
     // Galago bakes absolute paths into everything:
     const PREFIX: &str = "/home/jfoley/antique";
+    use crate::corpus::decompress_document;
 
     #[test]
     fn corpus_has_all_files() {
@@ -524,7 +529,9 @@ mod tests {
             let repr = doc.to_be_bytes();
 
             let stored = corpus.find_bytes(&repr).unwrap().unwrap();
-            println!("{:?} -> {:?}", rel_path, stored);
+            let document = decompress_document(stored).unwrap();
+
+            println!("{:?} -> {}", rel_path, &document.text);
         }
     }
 }

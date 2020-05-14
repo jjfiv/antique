@@ -1,8 +1,8 @@
 use crate::galago_btree::ValueEntry;
 use crate::io_helper::SliceInputStream;
+use crate::scoring::SyncTo;
 use crate::{DocId, Error};
 use std::convert::TryInto;
-use crate::scoring::SyncTo;
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Debug, Clone, Copy)]
 pub enum IndexPartType {
@@ -24,21 +24,24 @@ impl IndexPartType {
     pub fn from_reader_class(class_name: &str) -> Result<IndexPartType, Error> {
         Ok(match class_name {
             "org.lemurproject.galago.core.index.disk.DiskNameReader" => IndexPartType::Names,
-            "org.lemurproject.galago.core.index.disk.DiskNameReverseReader" => IndexPartType::NamesReverse,
+            "org.lemurproject.galago.core.index.disk.DiskNameReverseReader" => {
+                IndexPartType::NamesReverse
+            }
             "org.lemurproject.galago.core.index.corpus.CorpusReader" => IndexPartType::Corpus,
             "org.lemurproject.galago.core.index.disk.DiskLengthsReader" => IndexPartType::Lengths,
-            "org.lemurproject.galago.core.index.disk.PositionIndexReader" => IndexPartType::Positions,
-            _ => return Err(Error::MissingGalagoReader(class_name.to_string()))
+            "org.lemurproject.galago.core.index.disk.PositionIndexReader" => {
+                IndexPartType::Positions
+            }
+            _ => return Err(Error::MissingGalagoReader(class_name.to_string())),
         })
     }
 }
 
-
 impl ValueEntry {
-    fn stream(&self) -> SliceInputStream {
+    pub(crate) fn stream(&self) -> SliceInputStream {
         SliceInputStream::new(&self.source[self.start..self.end])
     }
-    fn substream(&self, start_end: (usize, usize)) -> SliceInputStream {
+    pub(crate) fn substream(&self, start_end: (usize, usize)) -> SliceInputStream {
         let (start, end) = start_end;
         let sub_start = self.start + start;
         let sub_end = self.start + end;
@@ -166,10 +169,16 @@ impl PositionsPostings {
 
         let inline_minimum = if has_inlining {
             Some(reader.read_vbyte()? as u32)
-        } else { None };
+        } else {
+            None
+        };
         let document_count = reader.read_vbyte()?;
         let total_position_count = reader.read_vbyte()?;
-        let maximum_position_count = if has_maxtf { Some(reader.read_vbyte()? as u32) } else { None };
+        let maximum_position_count = if has_maxtf {
+            Some(reader.read_vbyte()? as u32)
+        } else {
+            None
+        };
 
         // We don't support skips, but we can support ignoring them fairly easily.
         if has_skips {
@@ -183,7 +192,7 @@ impl PositionsPostings {
         let positions_length = reader.read_vbyte()? as usize;
         // Again, we don't support skips, bug ignore them.
         if has_skips {
-            let _skips_length  = reader.read_vbyte()?;
+            let _skips_length = reader.read_vbyte()?;
             let _skip_positions_length = reader.read_vbyte()?;
         }
 
@@ -200,8 +209,12 @@ impl PositionsPostings {
         Ok(PositionsPostings {
             source,
             total_position_count,
-            document_count, inline_minimum, maximum_position_count, 
-            documents, counts, positions,
+            document_count,
+            inline_minimum,
+            maximum_position_count,
+            documents,
+            counts,
+            positions,
         })
     }
     pub fn iterator(&self) -> Result<PositionsPostingsIter, Error> {
@@ -214,7 +227,7 @@ impl PositionsPostings {
             positions_byte_size: 0,
             current_count: 0,
             current_document: DocId(0),
-            positions_buffer: Vec::new(), 
+            positions_buffer: Vec::new(),
             // These two values are basically invalid; but tricks to init correctly...
             positions_loaded: true,
             document_index: 0,
@@ -308,9 +321,11 @@ impl<'p> SyncTo for PositionsPostingsIter<'p> {
     fn sync_to(&mut self, document: DocId) -> Result<DocId, Error> {
         // Linear search through the postings-list:
         // Don't have to check for done here because of u64::max trick.
-        while document > self.current_document && self.document_index < self.postings.document_count {
+        while document > self.current_document && self.document_index < self.postings.document_count
+        {
             self.document_index += 1;
-            self.load_next_posting().map_err(|e| e.with_context("load_next_posting"))?;
+            self.load_next_posting()
+                .map_err(|e| e.with_context("load_next_posting"))?;
         }
 
         Ok(self.current_document)
@@ -321,17 +336,35 @@ impl<'p> SyncTo for PositionsPostingsIter<'p> {
 mod tests {
     use super::*;
     use crate::galago_btree as btree;
-    use std::path::Path;
     use crate::scoring::Movement;
+    use std::path::Path;
 
     #[test]
     fn test_index_parts() {
-        assert_eq!(IndexPartType::Lengths, IndexPartType::from_file("data/index.galago/lengths").unwrap());
-        assert_eq!(IndexPartType::Positions, IndexPartType::from_file("data/index.galago/postings").unwrap());
-        assert_eq!(IndexPartType::Positions, IndexPartType::from_file("data/index.galago/postings.krovetz").unwrap());
-        assert_eq!(IndexPartType::Names, IndexPartType::from_file("data/index.galago/names").unwrap());
-        assert_eq!(IndexPartType::NamesReverse, IndexPartType::from_file("data/index.galago/names.reverse").unwrap());
-        assert_eq!(IndexPartType::Corpus, IndexPartType::from_file("data/index.galago/corpus").unwrap());
+        assert_eq!(
+            IndexPartType::Lengths,
+            IndexPartType::from_file("data/index.galago/lengths").unwrap()
+        );
+        assert_eq!(
+            IndexPartType::Positions,
+            IndexPartType::from_file("data/index.galago/postings").unwrap()
+        );
+        assert_eq!(
+            IndexPartType::Positions,
+            IndexPartType::from_file("data/index.galago/postings.krovetz").unwrap()
+        );
+        assert_eq!(
+            IndexPartType::Names,
+            IndexPartType::from_file("data/index.galago/names").unwrap()
+        );
+        assert_eq!(
+            IndexPartType::NamesReverse,
+            IndexPartType::from_file("data/index.galago/names.reverse").unwrap()
+        );
+        assert_eq!(
+            IndexPartType::Corpus,
+            IndexPartType::from_file("data/index.galago/corpus").unwrap()
+        );
     }
 
     #[test]
@@ -367,7 +400,10 @@ mod tests {
         let mut iter = positions.iterator().unwrap();
         while !iter.is_done() {
             iter.sync_to(iter.current_document).unwrap();
-            println!("the[{:?}] = {} .. ", iter.current_document, iter.current_count);
+            println!(
+                "the[{:?}] = {} .. ",
+                iter.current_document, iter.current_count
+            );
             println!("   {:?}", iter.get_positions().unwrap());
             iter.move_past().unwrap();
         }
@@ -379,13 +415,32 @@ mod tests {
         let fields = reader.collect_string_keys().unwrap();
         assert_eq!(fields, &["document".to_string()])
     }
-    
+
     #[test]
     fn test_load_all_doc_names() {
         let reader = btree::read_info(&Path::new("data/index.galago/names.reverse")).unwrap();
         let fields = reader.collect_string_keys().unwrap();
-        let mut names: Vec<String> = fields.into_iter().map(|path| Path::new(&path).file_name().unwrap().to_string_lossy().to_string()).collect();
+        let mut names: Vec<String> = fields
+            .into_iter()
+            .map(|path| {
+                Path::new(&path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
         names.sort();
-        assert_eq!(names, &["README.txt", "ch1.txt", "ch2.txt", "ch3.txt", "ch4.txt", "ch5.txt"])
+        assert_eq!(
+            names,
+            &[
+                "README.txt",
+                "ch1.txt",
+                "ch2.txt",
+                "ch3.txt",
+                "ch4.txt",
+                "ch5.txt"
+            ]
+        )
     }
 }
