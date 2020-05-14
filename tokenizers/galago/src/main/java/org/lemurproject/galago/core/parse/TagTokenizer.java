@@ -124,11 +124,6 @@ public class TagTokenizer {
 			}
 		}
 
-		if (args[0].equals("--file")) {
-			doc.text = new String(Files.readAllBytes(Paths.get(args[1])), "UTF-8");
-		} else {
-			doc.text = args[0];
-		}
 		tok.tokenize(doc);
 		mapper.writeValue(System.out, doc);
 	}

@@ -298,6 +298,8 @@ impl State {
                     let sub_token: String = relevant[s..].iter().collect();
                     self.add_token(sub_token, start + s, end);
                 }
+                return;
+
             }
         }
         self.add_token(token, start, end)
@@ -374,7 +376,7 @@ impl State {
         }
 
         // Must allocate here for to_lowercase.
-        let tag_name: String = self.text[self.position + 2..i]
+        let tag_name: String = self.text[self.position + 1..i]
             .iter()
             .flat_map(|c| c.to_lowercase())
             .collect();
@@ -700,6 +702,15 @@ mod tests {
         tokenizer.parse();
         tokenizer.into_document(HashSet::default())
     }
+    fn tokenize_tags(text: &str, tags: &[&str]) -> Document {
+        let mut tokenizer = State::new(text);
+        tokenizer.parse();
+        let mut keep = HashSet::default();
+        for tag in tags {
+            keep.insert(tag.to_string());
+        }
+        tokenizer.into_document(keep)
+    }
 
     #[test]
     fn simple_splitting() {
@@ -736,5 +747,53 @@ mod tests {
         tokenizer.parse();
         let doc = tokenizer.into_document(HashSet::default());
         assert_eq!(expected, doc);
+    }
+
+    use std::process::{Output, Command};
+
+    fn execute_jar_version(contents: &str, tags: &[&str]) -> Document {
+        let mut cmd = Command::new("java");
+        let cmd = cmd 
+            .arg("-jar")
+            .arg("tokenizers/galago/target/TagTokenizer-1.0.jar")
+            .arg("--text")
+            .arg(contents);
+        for tag in tags {
+            cmd.arg("--tag").arg(tag);
+        }
+        let output: Output = cmd.output().unwrap();
+        serde_json::from_slice(output.stdout.as_slice()).unwrap()
+    }
+
+    use std::fs;
+    #[test]
+    fn test_txt_file() {
+        let data = fs::read_to_string("data/inputs/README.txt").unwrap();
+        let jt = execute_jar_version(&data, &[]);
+        let rt = tokenize(&data);
+        assert_eq!(jt, rt);
+    }
+    
+    #[test]
+    fn test_xml_snippet() {
+        let data = r#"
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.12</version>
+            <scope>test</scope>
+        </dependency>
+        "#;
+        let jt = execute_jar_version(&data, &["dependency"]);
+        let rt = tokenize_tags(&data, &["dependency"]);
+        assert_eq!(jt, rt);
+    }
+
+    #[test]
+    fn test_pom_file() {
+        let data = fs::read_to_string("tokenizers/galago/pom.xml").unwrap();
+        let jt = execute_jar_version(&data, &["dependency"]);
+        let rt = tokenize_tags(&data, &["dependency"]);
+        assert_eq!(jt, rt);
     }
 }
