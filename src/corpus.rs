@@ -6,13 +6,12 @@ use crate::HashSet;
 use snap::raw::Decoder;
 use std::convert::TryInto;
 
-
 /// Java's Snappy Header; I'm just putting the versions in here.
 /// Non-standard snappy header of some kind.
 /// https://github.com/xerial/snappy-java/blob/master/src/main/java/org/xerial/snappy/SnappyCodec.java
 const SNAPPY_HEADER: &[u8] = &[
     // SNAPPY
-    130, b'S', b'N', b'A', b'P', b'P', b'Y', 0, // 
+    130, b'S', b'N', b'A', b'P', b'P', b'Y', 0, //
     // Version info:
     0, 0, 0, 1, 0, 0, 0, 1,
 ];

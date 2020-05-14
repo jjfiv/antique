@@ -1,4 +1,4 @@
-use crate::io_helper::{Bytes, SliceInputStream, InputStream, DataInputStream};
+use crate::io_helper::{Bytes, DataInputStream, InputStream, SliceInputStream};
 use crate::{galago_postings::IndexPartType, DocId};
 use crate::{Error, HashMap};
 use memmap::{Mmap, MmapOptions};
@@ -516,10 +516,10 @@ mod tests {
     // Galago bakes absolute paths into everything:
     const PREFIX: &str = "/home/jfoley/antique";
     use crate::corpus::decompress_document;
-    use crate::galago_tokenizer::{State as Tokenizer};
+    use crate::galago_tokenizer::State as Tokenizer;
 
-    use std::fs;
     use crate::HashSet;
+    use std::fs;
 
     #[test]
     fn corpus_has_all_files() {
@@ -529,7 +529,7 @@ mod tests {
         let corpus = read_info(&Path::new("data/index.galago/corpus")).unwrap();
         for (name, doc) in keys.iter() {
             assert!(name.starts_with(PREFIX));
-            let rel_path = Path::new(&name[PREFIX.len()+1..]);
+            let rel_path = Path::new(&name[PREFIX.len() + 1..]);
             println!("{:?}", rel_path);
             let repr = doc.to_be_bytes();
 

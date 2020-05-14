@@ -299,7 +299,6 @@ impl State {
                     self.add_token(sub_token, start + s, end);
                 }
                 return;
-
             }
         }
         self.add_token(token, start, end)
@@ -749,11 +748,11 @@ mod tests {
         assert_eq!(expected, doc);
     }
 
-    use std::process::{Output, Command};
+    use std::process::{Command, Output};
 
     fn execute_jar_version(contents: &str, tags: &[&str]) -> Document {
         let mut cmd = Command::new("java");
-        let cmd = cmd 
+        let cmd = cmd
             .arg("-jar")
             .arg("tokenizers/galago/target/TagTokenizer-1.0.jar")
             .arg("--text")
@@ -773,7 +772,7 @@ mod tests {
         let rt = tokenize(&data);
         assert_eq!(jt, rt);
     }
-    
+
     #[test]
     fn test_xml_snippet() {
         let data = r#"

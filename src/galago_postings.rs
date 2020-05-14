@@ -1,5 +1,5 @@
 use crate::galago_btree::ValueEntry;
-use crate::io_helper::{ArcInputStream, SliceInputStream, DataInputStream, InputStream};
+use crate::io_helper::{ArcInputStream, DataInputStream, InputStream, SliceInputStream};
 use crate::scoring::{EvalNode, SyncTo};
 use crate::{DocId, Error};
 use std::convert::TryInto;
@@ -371,7 +371,6 @@ impl EvalNode for PositionsPostingsIter {
     //        self.get_positions().unwrap()
     //    }
     //}
-    
 }
 
 #[cfg(test)]
