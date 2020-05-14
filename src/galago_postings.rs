@@ -1,6 +1,6 @@
 use crate::galago_btree::ValueEntry;
 use crate::io_helper::{ArcInputStream, SliceInputStream, DataInputStream, InputStream};
-use crate::scoring::{TermEval, LengthsEval, SyncTo};
+use crate::scoring::{EvalNode, SyncTo};
 use crate::{DocId, Error};
 use std::convert::TryInto;
 
@@ -110,10 +110,10 @@ impl LengthsPostings {
     }
 }
 
-impl LengthsEval for LengthsPostings {
-    fn length(&mut self, doc: DocId) -> Option<u32> {
+impl EvalNode for LengthsPostings {
+    fn count(&mut self, doc: DocId) -> u32 {
         if doc < self.first_doc || doc > self.last_doc {
-            return None;
+            return 0;
         }
         let offset = ((doc.0 - self.first_doc.0) * 4) as usize;
         let begin = self.values_offset + offset + self.source.start;
@@ -121,6 +121,17 @@ impl LengthsEval for LengthsPostings {
             .try_into()
             .ok()
             .map(|it| u32::from_be_bytes(it))
+            .unwrap_or(0)
+    }
+    fn score(&mut self, _doc: DocId) -> f32 {
+        todo!()
+    }
+    fn matches(&mut self, _doc: DocId) -> bool {
+        // simplification, but fast
+        true
+    }
+    fn estimate_df(&self) -> u64 {
+        self.total_document_count
     }
 }
 
@@ -335,21 +346,31 @@ impl SyncTo for PositionsPostingsIter {
     }
 }
 
-impl TermEval for PositionsPostingsIter {
-    fn count(&mut self, doc: DocId) -> Option<u32> {
+impl EvalNode for PositionsPostingsIter {
+    fn count(&mut self, doc: DocId) -> u32 {
         if doc != self.current_document {
-            None
+            0
         } else {
-            Some(self.current_count)
+            self.current_count
         }
     }
-    fn positions(&mut self, doc: DocId) -> Option<&[u32]> {
-        if doc != self.current_document {
-            None
-        } else {
-            self.get_positions().ok()
-        }
+    fn score(&mut self, _doc: DocId) -> f32 {
+        todo!()
     }
+    fn matches(&mut self, doc: DocId) -> bool {
+        self.sync_to(doc).unwrap() == doc
+    }
+    fn estimate_df(&self) -> u64 {
+        self.postings.document_count
+    }
+    // TODO: come back to this...
+    //fn positions(&mut self, doc: DocId) -> &[u32] {
+    //    if doc != self.current_document {
+    //        &[]
+    //    } else {
+    //        self.get_positions().unwrap()
+    //    }
+    //}
     
 }
 
@@ -395,10 +416,10 @@ mod tests {
         let lengths_entry = reader.find_str("document").unwrap().unwrap();
         let mut lengths = LengthsPostings::new(lengths_entry).unwrap();
         assert_eq!(lengths.to_vec(), TRUE_LENGTHS);
-        assert_eq!(lengths.length(DocId(3)), Some(19));
-        assert_eq!(lengths.length(DocId(0)), Some(1071));
-        assert_eq!(lengths.length(DocId(5)), Some(1717));
-        assert_eq!(lengths.length(DocId(6)), None);
+        assert_eq!(lengths.count(DocId(3)), 19);
+        assert_eq!(lengths.count(DocId(0)), 1071);
+        assert_eq!(lengths.count(DocId(5)), 1717);
+        assert_eq!(lengths.count(DocId(6)), 0);
         assert_eq!(lengths.max_length, 1717);
         assert_eq!(lengths.min_length, 19);
         let sum = TRUE_LENGTHS.iter().map(|l| *l as u64).sum::<u64>();

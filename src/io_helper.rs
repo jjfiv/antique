@@ -64,7 +64,6 @@ where
         while !self.eof() {
             // read_byte:
             let byte = self.get()? as u64;
-            println!("byte={}", byte);
 
             // if highest bit set we're done!
             if byte & 0x80 > 0 {
