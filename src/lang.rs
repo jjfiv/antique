@@ -98,7 +98,7 @@ pub struct WeightedExpr {
     pub weight: f64,
     pub child: Box<QExpr>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct TextExpr {
     pub term: String,
     pub field: Option<String>,

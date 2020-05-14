@@ -1,10 +1,12 @@
+use super::postings::PositionsPostings;
 use crate::galago::btree::*;
+use crate::galago::postings::LengthsPostings;
 use crate::galago::postings::{DocsIter, IndexPartType, PositionsPostingsIter};
 use crate::lang::*;
 use crate::movement::MoverType;
-use crate::scoring::{EvalNode, Movement};
+use crate::scoring::*;
 use crate::DataNeeded;
-use crate::{Error, HashMap};
+use crate::{stats::CountStats, Error, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -23,10 +25,28 @@ struct GalagoField(Stemmer, String);
 
 impl Default for GalagoField {
     fn default() -> Self {
-        GalagoField(Stemmer::Krovetz, "document".into())
+        GalagoField(Stemmer::default(), "document".into())
     }
 }
 impl GalagoField {
+    fn from_str(field: Option<&str>) -> Result<GalagoField, Error> {
+        if field.is_none() || field == Some("document") {
+            return Ok(GalagoField::default());
+        }
+        let field = field.unwrap();
+        if field.starts_with("field.") || field.starts_with("postings") {
+            return GalagoField::from_file_name(field);
+        }
+        if !field.contains('.') {
+            return Ok(GalagoField(Stemmer::default(), field.into()));
+        }
+        let parts: Vec<&str> = field.split('.').collect();
+        match parts.len() {
+            2 => Ok(GalagoField(Stemmer::from_str(parts[1])?, parts[0].into())),
+            _ => Err(Error::UnknownIndexPart(field.into()))
+                .map_err(|e| e.with_context("GalagoField::from_str")),
+        }
+    }
     fn from_file_name(name: &str) -> Result<GalagoField, Error> {
         Ok(if name.starts_with("field") {
             let parts: Vec<&str> = name.split(".").collect();
@@ -60,7 +80,23 @@ enum Stemmer {
     Porter2,
     Null,
 }
+impl Default for Stemmer {
+    fn default() -> Self {
+        // Until we have a stemmer...
+        Self::Null
+    }
+}
 impl Stemmer {
+    fn from_str(name: &str) -> Result<Stemmer, Error> {
+        Ok(match name {
+            "krovetz" | "org.lemurproject.galago.core.parse.stem.KrovetzStemmer" => {
+                Stemmer::Krovetz
+            }
+            "porter" | "org.lemurproject.galago.core.parse.stem.Porter2Stemmer" => Stemmer::Porter2,
+            "" | "org.lemurproject.galago.core.parse.stem.NullStemmer" => Stemmer::Null,
+            other => return Err(Error::UnknownStemmer(other.into())),
+        })
+    }
     fn from_class_name(class_name: Option<&str>) -> Result<Stemmer, Error> {
         Ok(match class_name {
             Some("org.lemurproject.galago.core.parse.stem.KrovetzStemmer") => Stemmer::Krovetz,
@@ -137,13 +173,50 @@ impl Index {
         })
     }
 
-    fn postings_for_field(&self, field: Option<&str>) -> Option<&TreeReader> {
-        match field {
-            Some("document") | None => Some(&self.postings[&GalagoField::default()]),
-            Some(name) => match GalagoField::from_file_name(name) {
-                Ok(ff) => Some(&self.postings[&&ff]),
-                Err(_) => None,
-            },
+    fn count_stats(&mut self, expr: &QExpr) -> Result<CountStats, Error> {
+        match expr {
+            QExpr::Text(TextExpr {
+                term,
+                field,
+                stats_field,
+                ..
+            }) => {
+                let mut stats = CountStats::default();
+                let field = stats_field.as_deref().or(field.as_deref());
+                let lengths = self.lengths_for_field(field)?;
+                lengths.get_stats(&mut stats);
+
+                // If we can't find the term, its frequencies stay at zero.
+                let part = self.postings_for_field(field)?;
+                if let Some(value) = part.find_str(term)? {
+                    PositionsPostings::new(value)?.get_stats(&mut stats);
+                }
+
+                Ok(stats)
+            }
+            other => panic!("TODO: implement stats computation: {:?}", other),
+        }
+    }
+
+    fn postings_for_field(&self, field: Option<&str>) -> Result<&TreeReader, Error> {
+        let actual = GalagoField::from_str(field)?;
+        if let Some(tree) = self.postings.get(&actual) {
+            Ok(tree)
+        } else {
+            Err(Error::MissingField).map_err(|e| {
+                e.with_context(format!("Requested: {:?}, Attempted: {:?}", field, actual))
+            })
+        }
+    }
+
+    fn lengths_for_field(&self, field: Option<&str>) -> Result<LengthsPostings, Error> {
+        let actual = GalagoField::from_str(field)?;
+        if let Some(value) = self.lengths.find_str(&actual.1)? {
+            Ok(LengthsPostings::new(value)?)
+        } else {
+            Err(Error::MissingField).map_err(|e| {
+                e.with_context(format!("Requested: {:?}, Attempted: {:?}", field, actual))
+            })
         }
     }
 
@@ -153,20 +226,73 @@ impl Index {
         field: Option<&str>,
         needed: DataNeeded,
     ) -> Result<Option<Box<dyn EvalNode>>, Error> {
-        if let Some(part) = self.postings_for_field(field) {
-            if let Some(value) = part.find_str(term)? {
-                match needed {
-                    DataNeeded::Counts | DataNeeded::Positions => {
-                        Ok(Some(Box::new(PositionsPostingsIter::new(value)?)))
-                    }
-                    DataNeeded::Docs => Ok(Some(Box::new(DocsIter::new(value)?))),
+        let part = self.postings_for_field(field)?;
+        if let Some(value) = part.find_str(term)? {
+            match needed {
+                DataNeeded::Counts | DataNeeded::Positions => {
+                    Ok(Some(Box::new(PositionsPostingsIter::new(value)?)))
                 }
-            } else {
-                Ok(None)
+                DataNeeded::Docs => Ok(Some(Box::new(DocsIter::new(value)?))),
             }
         } else {
-            Err(Error::UnknownIndexPart(field.unwrap().to_string()))
+            Ok(None)
         }
+    }
+}
+
+pub fn expr_to_eval(e: &QExpr, context: &mut Index) -> Result<Box<dyn EvalNode>, Error> {
+    match e {
+        QExpr::Text(TextExpr {
+            term,
+            field,
+            data_needed,
+            ..
+        }) => {
+            match context.get_postings(
+                term.as_str(),
+                field.as_ref().map(|f| f.as_str()),
+                // Assume the worst here:
+                data_needed.unwrap_or(DataNeeded::Positions),
+            )? {
+                Some(postings) => Ok(postings),
+                None => Ok(Box::new(MissingTermEval)),
+            }
+        }
+        QExpr::Lengths(LengthsExpr { field }) => {
+            Ok(Box::new(context.lengths_for_field(Some(&field))?))
+        }
+        QExpr::Combine(CombineExpr { children, weights }) => {
+            let children: Result<Vec<_>, _> =
+                children.iter().map(|c| expr_to_eval(c, context)).collect();
+            let children = children?;
+            Ok(Box::new(WeightedSumEval::new(
+                children,
+                weights.into_iter().map(|w| *w as f32).collect(),
+            )))
+        }
+        QExpr::BM25(BM25Expr { b, k, child, stats }) => {
+            let fields = child.find_fields();
+            if fields.len() > 1 {
+                return Err(Error::QueryInit).map_err(|e| {
+                    e.with_context(format!("Too many fields in sub-query: {:?}", child))
+                });
+            }
+            let stats = match stats.as_ref() {
+                Some(prev) => prev.clone(),
+                None => context.count_stats(child)?,
+            };
+            let child = expr_to_eval(child, context)?;
+            let field = fields.iter().map(|s| s.as_str()).nth(0);
+            let lengths = Box::new(context.lengths_for_field(field)?);
+            Ok(Box::new(BM25Eval::new(
+                child,
+                lengths,
+                b.unwrap_or(0.75) as f32,
+                k.unwrap_or(1.2) as f32,
+                stats,
+            )))
+        }
+        other => panic!("expr_to_eval. TODO: {:?}", other),
     }
 }
 

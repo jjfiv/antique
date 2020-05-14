@@ -1,4 +1,5 @@
 pub mod galago;
+pub mod heap_collection;
 pub mod io_helper;
 pub mod lang;
 pub mod movement;
@@ -28,6 +29,8 @@ pub enum Error {
     Utf8DecodeError(Utf8Error),
     Context(String, Box<Error>),
     MissingGalagoReader(String),
+    MissingField,
+    QueryInit,
 }
 
 impl Error {
@@ -64,6 +67,9 @@ impl DocId {
     }
     pub fn to_be_bytes(&self) -> [u8; 8] {
         self.0.to_be_bytes()
+    }
+    pub fn next(&self) -> DocId {
+        return DocId(self.0 + 1);
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::galago::btree::ValueEntry;
 use crate::io_helper::{ArcInputStream, DataInputStream, InputStream, SliceInputStream};
 use crate::scoring::{EvalNode, Movement};
-use crate::{DocId, Error};
+use crate::{stats::CountStats, DocId, Error};
 use std::convert::TryInto;
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Debug, Clone, Copy)]
@@ -75,6 +75,11 @@ pub struct LengthsPostings {
 impl LengthsPostings {
     pub fn num_entries(&self) -> usize {
         (self.last_doc.0 - self.first_doc.0 + 1) as usize
+    }
+    /// What can this posting list tell us about the CountStats?
+    pub fn get_stats(&self, stats: &mut CountStats) {
+        stats.collection_length = self.collection_length;
+        stats.document_count = self.total_document_count;
     }
     pub fn to_vec(&self) -> Vec<u32> {
         let begin = self.values_offset + self.source.start;
@@ -239,6 +244,10 @@ impl PositionsPostings {
             counts,
             positions,
         })
+    }
+    pub fn get_stats(&self, stats: &mut CountStats) {
+        stats.collection_frequency = self.total_position_count;
+        stats.document_frequency = self.document_count;
     }
     pub fn docs(self) -> Result<DocsIter, Error> {
         let postings = self;

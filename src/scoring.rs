@@ -1,4 +1,4 @@
-use crate::{DocId, Error};
+use crate::{stats::CountStats, DocId, Error};
 
 pub trait Movement {
     fn is_done(&self) -> bool;
@@ -14,13 +14,33 @@ pub trait EvalNode {
     fn estimate_df(&self) -> u64;
 }
 
-struct BM25Eval {
+pub struct BM25Eval {
     b: f32,
     k: f32,
     average_dl: f32,
     idf: f32,
     child: Box<dyn EvalNode>,
     lengths: Box<dyn EvalNode>,
+}
+
+impl BM25Eval {
+    pub fn new(
+        child: Box<dyn EvalNode>,
+        lengths: Box<dyn EvalNode>,
+        b: f32,
+        k: f32,
+        stats: CountStats,
+    ) -> Self {
+        let idf = (stats.document_count as f64) / (stats.document_frequency as f64 + 0.5);
+        Self {
+            b,
+            k,
+            child,
+            lengths,
+            average_dl: stats.average_doc_length() as f32,
+            idf: idf.log2() as f32,
+        }
+    }
 }
 
 impl EvalNode for BM25Eval {
@@ -50,9 +70,14 @@ impl EvalNode for BM25Eval {
     }
 }
 
-struct WeightedSumEval {
+pub struct WeightedSumEval {
     children: Vec<Box<dyn EvalNode>>,
     weights: Vec<f32>,
+}
+impl WeightedSumEval {
+    pub fn new(children: Vec<Box<dyn EvalNode>>, weights: Vec<f32>) -> WeightedSumEval {
+        Self { children, weights }
+    }
 }
 
 impl EvalNode for WeightedSumEval {
@@ -89,6 +114,15 @@ impl EvalNode for WeightedSumEval {
     }
 }
 
+impl Movement for &mut dyn EvalNode {
+    fn is_done(&self) -> bool {
+        self.current_document().is_done()
+    }
+    fn move_past(&mut self) -> Result<DocId, Error> {
+        self.sync_to(DocId(self.current_document().0 + 1))
+    }
+}
+
 impl<T> Movement for T
 where
     T: EvalNode,
@@ -98,6 +132,29 @@ where
     }
     fn move_past(&mut self) -> Result<DocId, Error> {
         self.sync_to(DocId(self.current_document().0 + 1))
+    }
+}
+
+pub struct MissingTermEval;
+
+impl EvalNode for MissingTermEval {
+    fn current_document(&self) -> DocId {
+        DocId::no_more()
+    }
+    fn sync_to(&mut self, document: DocId) -> Result<DocId, Error> {
+        Ok(DocId::no_more())
+    }
+    fn count(&mut self, doc: DocId) -> u32 {
+        0
+    }
+    fn score(&mut self, doc: DocId) -> f32 {
+        0.0
+    }
+    fn matches(&mut self, doc: DocId) -> bool {
+        false
+    }
+    fn estimate_df(&self) -> u64 {
+        0
     }
 }
 

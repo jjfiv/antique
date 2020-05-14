@@ -692,15 +692,22 @@ fn index_of_end_attribute(
     None
 }
 
+/// This is what you'll probably want to import.
+pub fn tokenize(text: &str) -> Document {
+    let mut tokenizer = State::new(text);
+    tokenizer.parse();
+    tokenizer.into_document(HashSet::default())
+}
+pub fn tokenize_to_terms(text: &str) -> Vec<String> {
+    let mut tokenizer = State::new(text);
+    tokenizer.parse();
+    tokenizer.into_document(HashSet::default()).terms
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn tokenize(text: &str) -> Document {
-        let mut tokenizer = State::new(text);
-        tokenizer.parse();
-        tokenizer.into_document(HashSet::default())
-    }
     fn tokenize_tags(text: &str, tags: &[&str]) -> Document {
         let mut tokenizer = State::new(text);
         tokenizer.parse();
