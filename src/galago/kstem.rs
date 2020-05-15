@@ -370,55 +370,60 @@ impl<'t> KStemState<'t> {
         if self.word.len() <= 5 {
             return;
         }
-        let ing = self.ends_in("ing");
 
+        if !self.ends_in("ing") {
+            return;
+        }
         /* the vowelinstem() is necessary so we don't stem acronyms */
-        if self.ends_in("ing") && self.vowel_in_stem() {
-            /* try adding an `e' to the stem and check against the dictionary */
-            self.word.push('e');
+        if !self.vowel_in_stem() {
+            return;
+        }
 
-            if let Some(e) = self.entry() {
-                if !e.exception() {
-                    return;
-                }
+        self.word.truncate(self.j + 1);
+        /* try adding an `e' to the stem and check against the dictionary */
+        self.word.push('e');
+
+        if let Some(e) = self.entry() {
+            if !e.exception() {
+                return;
             }
+        }
 
-            // remove the 'e':
-            self.word.pop();
+        // remove the 'e':
+        self.word.pop();
 
+        if self.lookup() {
+            return;
+        }
+
+        if self.double_consonant(self.k()) {
+            let c = self.word.pop().unwrap();
             if self.lookup() {
                 return;
             }
-
-            if self.double_consonant(self.k()) {
-                let c = self.word.pop().unwrap();
-                if self.lookup() {
-                    return;
-                }
-                self.word.push(c);
-                // the default is to leave the consonant doubled (e.g.,`fingerspelling' -> `fingerspell').
-                // Unfortunately `bookselling' -> `booksell' and `mislabelling' -> `mislabell').
-                // Without making the algorithm significantly more complicated, this is the best I can do */
-            }
-
-            //
-            // the word wasn't in the dictionary after removing the stem, and then checking
-            // with and without a final `e'. The default is to add an `e' unless the word
-            // ends in two consonants, so `microcoding' -> `microcode'. The two consonants
-            // restriction wouldn't normally be necessary, but is needed because we don't
-            // try to deal with prefixes and compounds, and most of the time it is correct
-            // (e.g., footstamping -> footstamp, not footstampe; however, decoupled ->
-            // decoupl). We can prevent almost all of the incorrect stems if we try to do
-            // some prefix analysis first
-            //
-
-            if self.j > 0 && self.is_consonant(self.j) && self.is_consonant(self.j - 1) {
-                self.word.truncate(self.j + 1);
-                return;
-            }
-            self.word.truncate(self.j + 1);
-            self.word.push('e');
+            self.word.push(c);
+            // the default is to leave the consonant doubled (e.g.,`fingerspelling' -> `fingerspell').
+            // Unfortunately `bookselling' -> `booksell' and `mislabelling' -> `mislabell').
+            // Without making the algorithm significantly more complicated, this is the best I can do */
         }
+
+        //
+        // the word wasn't in the dictionary after removing the stem, and then checking
+        // with and without a final `e'. The default is to add an `e' unless the word
+        // ends in two consonants, so `microcoding' -> `microcode'. The two consonants
+        // restriction wouldn't normally be necessary, but is needed because we don't
+        // try to deal with prefixes and compounds, and most of the time it is correct
+        // (e.g., footstamping -> footstamp, not footstampe; however, decoupled ->
+        // decoupl). We can prevent almost all of the incorrect stems if we try to do
+        // some prefix analysis first
+        //
+
+        if self.j > 0 && self.is_consonant(self.j) && self.is_consonant(self.j - 1) {
+            self.word.truncate(self.j + 1);
+            return;
+        }
+        self.word.truncate(self.j + 1);
+        self.word.push('e');
     }
 
     fn endings_ity(&mut self) {
@@ -477,19 +482,100 @@ impl<'t> KStemState<'t> {
         self.word.truncate(self.j + 1);
     } // endings_ity
 
-    fn endings_ness(&mut self) {}
-    fn endings_ion(&mut self) {}
-    fn endings_er_ar(&mut self) {}
-    fn endings_ly(&mut self) {}
-    fn endings_al(&mut self) {}
-    fn endings_ive(&mut self) {}
-    fn endings_ize(&mut self) {}
-    fn endings_ment(&mut self) {}
-    fn endings_ble(&mut self) {}
-    fn endings_ism(&mut self) {}
-    fn endings_ic(&mut self) {}
-    fn endings_ncy(&mut self) {}
-    fn endings_nce(&mut self) {}
+    fn endings_ness(&mut self) {
+        if !self.ends_in("ness") {
+            return;
+        }
+        self.word.truncate(self.j + 1);
+        if self.word[self.j] == 'i' {
+            self.word[self.j] = 'y';
+        }
+    }
+
+    fn endings_ion(&mut self) {
+        if !self.ends_in("ion") {
+            return;
+        }
+        // TODO
+    }
+    fn endings_er_ar(&mut self) {
+        if self.ends_in("er") {
+            // TODO
+            return;
+        }
+        if self.ends_in("ar") {
+            // TODO
+            return;
+        }
+    }
+    fn endings_ly(&mut self) {
+        if !self.ends_in("ly") {
+            return;
+        }
+        // TODO
+    }
+    fn endings_al(&mut self) {
+        if !self.ends_in("al") {
+            return;
+        }
+        // TODO
+    }
+    fn endings_ive(&mut self) {
+        if !self.ends_in("ive") {
+            return;
+        }
+        // TODO
+    }
+    fn endings_ize(&mut self) {
+        if !self.ends_in("ize") {
+            return;
+        }
+        // TODO
+    }
+    fn endings_ment(&mut self) {
+        if !self.ends_in("ment") {
+            return;
+        }
+        self.word.truncate(self.j + 1);
+        if self.lookup() {
+            return;
+        }
+        // undo:
+        self.word.extend("ment".chars());
+    }
+    fn endings_ble(&mut self) {
+        if !self.ends_in("ble") {
+            return;
+        }
+        // TODO
+    }
+    fn endings_ism(&mut self) {
+        if self.ends_in("ism") {
+            self.word.truncate(self.j + 1);
+        }
+    }
+    fn endings_ic(&mut self) {
+        if !self.ends_in("ic") {
+            return;
+        }
+        // TODO
+    }
+    fn endings_ncy(&mut self) {
+        if !self.ends_in("ncy") {
+            return;
+        }
+        let j = self.j;
+        if !(self.word[j] == 'e' || self.word[j] == 'a') {
+            return;
+        }
+        // TODO
+    }
+    fn endings_nce(&mut self) {
+        if !self.ends_in("nce") {
+            return;
+        }
+        // TODO
+    }
 
     fn vowel_in_stem(&mut self) -> bool {
         for i in 0..self.j + 1 {
