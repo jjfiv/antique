@@ -217,7 +217,7 @@ impl State {
     }
 
     fn add_token(&mut self, token: String, start: usize, end: usize) {
-        if token.len() <= 0 {
+        if token.trim().len() <= 0 {
             return;
         }
         // Hacks to see if token is short enough: (at least rust skips the allocation here)

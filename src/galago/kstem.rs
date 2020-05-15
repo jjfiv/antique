@@ -76,6 +76,7 @@ impl<'t> KStemState<'t> {
                 if !ch.is_ascii_alphabetic() {
                     return self.original.to_lowercase();
                 }
+                self.word.push(ch);
             }
         }
         // See if this is in our table:
@@ -83,16 +84,26 @@ impl<'t> KStemState<'t> {
             return found;
         }
 
+        println!("stemming: {}, {:?}", self.original, self.word);
         // Try all endings sequentially and break when found:
         self.plural();
+        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.past_tense();
+        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
+
+        self.aspect();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+        println!("stemming: {}, {:?}", self.original, self.word);
 
         self.word.iter().collect()
     }
@@ -104,15 +115,16 @@ impl<'t> KStemState<'t> {
     }
     fn ends_in(&mut self, xs: &str) -> bool {
         let suffix: Vec<char> = xs.chars().collect();
-        let r = self.word.len() - suffix.len();
         if suffix.len() > self.k() {
             return false;
         }
+        let r = self.word.len() - suffix.len();
 
         let mut matches = true;
+        let end = &self.word[r..];
         for i in 0..suffix.len() {
             let lhs = suffix[i];
-            let rhs = self.word[i];
+            let rhs = end[i];
             if lhs != rhs {
                 matches = false;
                 break;
@@ -270,6 +282,62 @@ impl<'t> KStemState<'t> {
         }
     } // past_tense
 
+    fn aspect(&mut self) {
+        // handle short words (aging -> age) via a direct mapping. This prevents (thing -> the) in the version of this routine that ignores inflectional variants that are mentioned in the dictionary (when the root is also present)
+        if self.word.len() <= 5 {
+            return;
+        }
+        let ing = self.ends_in("ing");
+
+        /* the vowelinstem() is necessary so we don't stem acronyms */
+        if self.ends_in("ing") && self.vowel_in_stem() {
+            /* try adding an `e' to the stem and check against the dictionary */
+            self.word.push('e');
+
+            if let Some(e) = self.entry() {
+                if !e.exception() {
+                    return;
+                }
+            }
+
+            // remove the 'e':
+            self.word.pop();
+
+            if self.lookup() {
+                return;
+            }
+
+            if self.double_consonant(self.k()) {
+                let c = self.word.pop().unwrap();
+                if self.lookup() {
+                    return;
+                }
+                self.word.push(c);
+                // the default is to leave the consonant doubled (e.g.,`fingerspelling' -> `fingerspell').
+                // Unfortunately `bookselling' -> `booksell' and `mislabelling' -> `mislabell').
+                // Without making the algorithm significantly more complicated, this is the best I can do */
+            }
+
+            //
+            // the word wasn't in the dictionary after removing the stem, and then checking
+            // with and without a final `e'. The default is to add an `e' unless the word
+            // ends in two consonants, so `microcoding' -> `microcode'. The two consonants
+            // restriction wouldn't normally be necessary, but is needed because we don't
+            // try to deal with prefixes and compounds, and most of the time it is correct
+            // (e.g., footstamping -> footstamp, not footstampe; however, decoupled ->
+            // decoupl). We can prevent almost all of the incorrect stems if we try to do
+            // some prefix analysis first
+            //
+
+            if self.j > 0 && self.is_consonant(self.j) && self.is_consonant(self.j - 1) {
+                self.word.truncate(self.j + 1);
+                return;
+            }
+            self.word.truncate(self.j + 1);
+            self.word.push('e');
+        }
+    }
+
     fn vowel_in_stem(&mut self) -> bool {
         for i in 0..self.j + 1 {
             if self.is_vowel(i) {
@@ -419,7 +487,8 @@ mod tests {
         let expected: Vec<&str> = EXPECTED.trim().split_ascii_whitespace().collect();
 
         for (lhs, rhs) in terms.iter().zip(expected.iter()) {
-            if lhs != rhs {
+            let lhs = stem(lhs);
+            if lhs.as_str() != *rhs {
                 panic!("Stemmer TODO: {} -> {}", lhs, rhs);
             }
         }
