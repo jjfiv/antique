@@ -682,18 +682,66 @@ impl<'t> KStemState<'t> {
             self.word.extend("ial".chars());
         }
     }
+
     fn endings_ive(&mut self) {
         if !self.ends_in("ive") {
             return;
         }
-        // TODO
+        let j = self.j;
+        self.word.truncate(j + 1);
+        if self.lookup() {
+            return;
+        }
+
+        // try 'e'
+        self.word.push('e');
+        if self.lookup() {
+            return;
+        }
+
+        // reset
+        self.word.pop();
+        self.word.extend("ive".chars());
+
+        if j > 0 && self.word[j - 1] == 'a' && self.word[j] == 't' {
+            // swap 'ative' with 'e':
+            self.word.truncate(j - 1);
+            self.word.push('e');
+            if self.lookup() {
+                return;
+            }
+
+            // ditch the 'e' and try again:
+            self.word.pop();
+            if self.lookup() {
+                return;
+            }
+
+            self.word.extend("ative".chars());
+        }
+
+        // try -ive to -ion
+        // injunctive -> injunction
+        self.word.pop();
+        self.word.pop();
+        self.word.extend("on".chars());
+        if self.lookup() {
+            return;
+        }
+
+        // restore:
+        self.word.pop();
+        self.word.pop();
+        self.word.extend("ve".chars());
     }
+
     fn endings_ize(&mut self) {
         if !self.ends_in("ize") {
             return;
         }
         // TODO
     }
+
     fn endings_ment(&mut self) {
         if !self.ends_in("ment") {
             return;
@@ -920,6 +968,8 @@ mod tests {
         assert_eq!(stem("elimination"), "eliminate");
         assert_eq!(stem("bibliographical"), "bibliography");
         assert_eq!(stem("special"), "special");
+        assert_eq!(stem("injunctive"), "injunction");
+        assert_eq!(stem("determinative"), "determine");
     }
 
     #[test]
