@@ -2,6 +2,8 @@ pub mod btree;
 pub mod corpus;
 pub mod field;
 pub mod index;
+pub mod kstem;
+pub mod kstem_data;
 pub mod lang;
 pub mod postings;
 pub mod stemmer;
