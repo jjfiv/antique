@@ -115,7 +115,7 @@ impl<'t> KStemState<'t> {
             return found;
         }
 
-        self.endings_er_ar();
+        self.endings_er_or();
         if let Some(found) = self.check_done() {
             return found;
         }
@@ -562,14 +562,61 @@ impl<'t> KStemState<'t> {
         }
     }
 
-    fn endings_er_ar(&mut self) {
-        if self.ends_in("er") {
-            // TODO
+    fn endings_er_or(&mut self) {
+        if self.ends_in("izer") {
+            self.word.pop(); // ditch the 'r'
             return;
         }
-        if self.ends_in("ar") {
-            // TODO
-            return;
+        if self.ends_in("er") || self.ends_in("or") {
+            let j = self.j;
+            let e_or_o = self.word[j + 1];
+            if self.double_consonant(j) {
+                self.word.truncate(j);
+                if self.lookup() {
+                    return;
+                }
+                self.word.push(self.word[j - 1]);
+            }
+
+            // ier:
+            if self.word[j] == 'i' {
+                self.word[j] = 'y';
+                self.word.truncate(j + 1);
+                if self.lookup() {
+                    return;
+                }
+                self.word[j] = 'i';
+                self.word.push('e');
+            }
+
+            // eer:
+            if self.word[j] == 'e' {
+                self.word.truncate(j);
+                if self.lookup() {
+                    return;
+                }
+                self.word.push('e');
+            }
+
+            // remove the 'r'?
+            self.word.truncate(j + 2);
+            if self.lookup() {
+                return;
+            }
+            // remove the -er, -or
+            self.word.truncate(j + 1);
+            if self.lookup() {
+                return;
+            }
+            // try adding an e (just for the 'o' case...)
+            self.word.push('e');
+            if self.lookup() {
+                return;
+            }
+
+            self.word.truncate(j + 1);
+            self.word.push(e_or_o);
+            self.word.push('r');
         }
     }
     fn endings_ly(&mut self) {
