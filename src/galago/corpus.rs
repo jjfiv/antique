@@ -6,6 +6,22 @@ use crate::HashSet;
 use snap::raw::Decoder;
 use std::convert::TryInto;
 
+pub struct CorpusDoc {
+    pub metadata: Vec<(String, String)>,
+    pub text: String,
+}
+
+impl CorpusDoc {
+    pub fn into_tokenized(self) -> Document {
+        let mut tok = Tokenizer::new(&self.text);
+        tok.parse();
+        tok.into_document(HashSet::default())
+    }
+    pub fn extract(value: ValueEntry) -> Result<CorpusDoc, Error> {
+        decompress_document(value)
+    }
+}
+
 /// Java's Snappy Header; I'm just putting the versions in here.
 /// Non-standard snappy header of some kind.
 /// https://github.com/xerial/snappy-java/blob/master/src/main/java/org/xerial/snappy/SnappyCodec.java
@@ -16,7 +32,7 @@ const SNAPPY_HEADER: &[u8] = &[
     0, 0, 0, 1, 0, 0, 0, 1,
 ];
 
-pub fn decompress_document(value: ValueEntry) -> Result<Document, Error> {
+pub fn decompress_document(value: ValueEntry) -> Result<CorpusDoc, Error> {
     let compressed = &value.source[value.start..value.end];
     if !compressed.starts_with(SNAPPY_HEADER) {
         return Err(Error::CompressionError.with_context("Missing Xerial Snappy Header"));
@@ -45,21 +61,20 @@ pub fn decompress_document(value: ValueEntry) -> Result<Document, Error> {
     let _name = read_string(&mut reader)?;
 
     let metadata_count = reader.read_u32()?;
-    let mut metadata: Vec<(&str, &str)> = Vec::new();
+    let mut metadata: Vec<(String, String)> = Vec::new();
     for _ in 0..metadata_count {
         let key = read_string(&mut reader)?;
         let val = read_string(&mut reader)?;
-        metadata.push((key, val));
+        metadata.push((key.into(), val.into()));
     }
 
     let text = read_string(&mut reader)?;
     // text should be skippable: so it's size + byte-length should be encoded correctly.
     debug_assert_eq!(text_size, text.as_bytes().len() + 4);
-
-    let mut tok = Tokenizer::new(text);
-    tok.parse();
-    let tags: HashSet<String> = HashSet::default();
-    Ok(tok.into_document(tags))
+    Ok(CorpusDoc {
+        metadata,
+        text: text.to_string(),
+    })
 }
 
 fn read_string<'src>(target: &mut SliceInputStream<'src>) -> Result<&'src str, Error> {

@@ -103,7 +103,7 @@ impl TreeLocation {
             Ok(TreeLocation::SingleFile(path.into()))
         }
     }
-    pub(crate) fn keys_path(&self) -> &Path {
+    fn keys_path(&self) -> &Path {
         match self {
             TreeLocation::SingleFile(p) => &p,
             TreeLocation::SplitKeys(keys) => &keys,
@@ -345,6 +345,9 @@ pub struct ValueEntry {
 impl ValueEntry {
     pub fn len(&self) -> usize {
         self.end - self.start
+    }
+    pub fn to_str(&self) -> Result<&str, Error> {
+        Ok(std::str::from_utf8(&self.source[self.start..self.end])?)
     }
 }
 

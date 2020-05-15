@@ -21,6 +21,7 @@ pub enum Error {
     UnknownStemmer(String),
     UnknownIndexPart(String),
     CompressionError,
+    QueryErrors(Vec<lang::QErr>),
     IO(io::Error),
     BadFileName(OsString),
     BadGalagoMagic(u64),

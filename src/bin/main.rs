@@ -4,7 +4,7 @@ use std::io;
 use std::path::Path;
 use std::time::Instant;
 
-use antique::galago::index::{expr_to_eval, expr_to_mover, Index};
+use antique::galago::index::Index;
 use antique::galago::tokenizer::tokenize_to_terms;
 use antique::heap_collection::*;
 use antique::lang::*;
@@ -54,7 +54,7 @@ fn main() -> Result<(), Error> {
         // evaluation parts:
         //let mut mover = expr_to_mover(&query, &mut index)?;
         let start = Instant::now();
-        let mut eval = expr_to_eval(&query, &mut index)?;
+        let mut eval = index.eval(&query)?;
 
         let mut results = ScoringHeap::new(1000);
         let mut here = eval.current_document();
