@@ -290,6 +290,21 @@ impl<'t> KStemState<'t> {
             self.word.push('e');
             return;
         }
+        // just ends-with s:
+
+        if self.word.len() <= 3 {
+            return;
+        }
+
+        if self.ends_in("ous") {
+            return;
+        }
+        if self.ends_in("ss") {
+            return;
+        }
+
+        // finally, pop the 's':
+        self.word.pop();
     } // plural
 
     fn past_tense(&mut self) {
@@ -512,6 +527,44 @@ impl<'t> KStemState<'t> {
         if !self.ends_in("ly") {
             return;
         }
+        let j = self.j;
+        // try 'le'
+        self.word[j + 2] = 'e';
+        if self.lookup() {
+            return;
+        }
+        // try just removing -ly.
+        self.word.truncate(j + 1);
+        if self.lookup() {
+            return;
+        }
+
+        // ally -> al
+        if j > 0 && self.word[j - 1] == 'a' && self.word[j] == 'l' {
+            return;
+        }
+        self.word.extend("ly".chars());
+
+        // ably -> able
+        if j > 0 && self.word[j - 1] == 'a' && self.word[j] == 'b' {
+            self.word[j + 2] = 'e';
+            return;
+        }
+
+        if self.word[j] == 'i' {
+            // militarily -> military
+            self.word.truncate(j);
+            self.word.push('y');
+            if self.lookup() {
+                return;
+            }
+            self.word.truncate(j);
+            self.word.extend("ily".chars());
+        }
+
+        // default: remove -ly
+        self.word.truncate(j + 1);
+
         // TODO
     }
     fn endings_al(&mut self) {
