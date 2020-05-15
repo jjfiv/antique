@@ -780,7 +780,40 @@ impl<'t> KStemState<'t> {
         if !self.ends_in("ble") {
             return;
         }
-        // TODO
+        let j = self.j;
+        // ible/able
+        if !(self.word[j] == 'a' || self.word[j] == 'i') {
+            return;
+        }
+        self.word.truncate(j + 1);
+        let a_or_e = self.word.pop().unwrap();
+        if self.lookup() {
+            return;
+        }
+        if self.double_consonant(self.word.len() - 1) {
+            let doubled = self.word.pop().unwrap();
+            if self.lookup() {
+                return;
+            }
+            self.word.push(doubled);
+        }
+        // try 'e' as usual:
+        self.word.push('e');
+        if self.lookup() {
+            return;
+        }
+        self.word.pop();
+
+        // try 'ate':
+        self.word.extend("ate".chars());
+        if self.lookup() {
+            return;
+        }
+
+        // restore:
+        self.word.truncate(j);
+        self.word.push(a_or_e);
+        self.word.extend("ble".chars());
     }
     fn endings_ism(&mut self) {
         if self.ends_in("ism") {
@@ -791,8 +824,38 @@ impl<'t> KStemState<'t> {
         if !self.ends_in("ic") {
             return;
         }
-        // TODO
+        let j = self.j;
+
+        // ic->ical
+        self.word.extend("al".chars());
+        if self.lookup() {
+            return;
+        }
+
+        // ic->y
+        self.word.truncate(j);
+        self.word.push('y');
+        if self.lookup() {
+            return;
+        }
+
+        // ic->e
+        self.word.pop();
+        self.word.push('e');
+        if self.lookup() {
+            return;
+        }
+
+        // ic->""
+        self.word.pop();
+        if self.lookup() {
+            return;
+        }
+
+        // restore:
+        self.word.extend("ic".chars());
     }
+
     fn endings_ncy(&mut self) {
         if !self.ends_in("ncy") {
             return;
@@ -1012,7 +1075,7 @@ mod tests {
         assert_eq!(stem("microcoding"), "microcode");
         assert_eq!(stem("footstamping"), "footstamp");
         assert_eq!(stem("decoupled"), "decouple");
-        assert_eq!(stem("reduceability"), "reduceable");
+        assert_eq!(stem("reduceability"), "reduce");
         assert_eq!(stem("positivity"), "positive");
         assert_eq!(stem("immunity"), "immune");
         assert_eq!(stem("capacity"), "capacity");
@@ -1022,6 +1085,8 @@ mod tests {
         assert_eq!(stem("special"), "special");
         assert_eq!(stem("injunctive"), "injunction");
         assert_eq!(stem("determinative"), "determine");
+        assert_eq!(stem("compensable"), "compensate");
+        assert_eq!(stem("canonic"), "canonical");
 
         // making up words to hit branches.
         assert_eq!(stem("abilityize"), "ability");
