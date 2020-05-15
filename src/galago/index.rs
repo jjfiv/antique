@@ -1,7 +1,9 @@
+use super::field::GalagoField;
 use super::postings::PositionsPostings;
+use super::stemmer::Stemmer;
 use crate::galago::btree::*;
+use crate::galago::postings::IndexPartType;
 use crate::galago::postings::LengthsPostings;
-use crate::galago::postings::{DocsIter, IndexPartType, PositionsPostingsIter};
 use crate::lang::*;
 use crate::movement::MoverType;
 use crate::scoring::*;
@@ -17,102 +19,6 @@ pub struct Index {
     lengths: TreeReader,
     names: TreeReader,
     names_reverse: TreeReader,
-}
-
-/// Galago defines a field as a stemmer across a field name.
-#[derive(Hash, Ord, PartialOrd, Eq, PartialEq, Debug, Clone)]
-struct GalagoField(Stemmer, String);
-
-impl Default for GalagoField {
-    fn default() -> Self {
-        GalagoField(Stemmer::default(), "document".into())
-    }
-}
-impl GalagoField {
-    fn from_str(field: Option<&str>) -> Result<GalagoField, Error> {
-        if field.is_none() || field == Some("document") {
-            return Ok(GalagoField::default());
-        }
-        let field = field.unwrap();
-        if field.starts_with("field.") || field.starts_with("postings") {
-            return GalagoField::from_file_name(field);
-        }
-        if !field.contains('.') {
-            return Ok(GalagoField(Stemmer::default(), field.into()));
-        }
-        let parts: Vec<&str> = field.split('.').collect();
-        match parts.len() {
-            2 => Ok(GalagoField(Stemmer::from_str(parts[1])?, parts[0].into())),
-            _ => Err(Error::UnknownIndexPart(field.into()))
-                .map_err(|e| e.with_context("GalagoField::from_str")),
-        }
-    }
-    fn from_file_name(name: &str) -> Result<GalagoField, Error> {
-        Ok(if name.starts_with("field") {
-            let parts: Vec<&str> = name.split(".").collect();
-            match parts.len() {
-                2 => GalagoField(Stemmer::Null, parts[1].to_string()),
-                3 => GalagoField(
-                    match parts[1] {
-                        "krovetz" => Stemmer::Krovetz,
-                        "porter" => Stemmer::Porter2,
-                        _ => return Err(Error::UnknownIndexPart(name.into())),
-                    },
-                    parts[2].to_string(),
-                ),
-                _ => return Err(Error::UnknownIndexPart(name.into())),
-            }
-        } else {
-            let field = "document".to_string();
-            match name {
-                "postings" => GalagoField(Stemmer::Null, field),
-                "postings.porter" => GalagoField(Stemmer::Porter2, field),
-                "postings.krovetz" => GalagoField(Stemmer::Krovetz, field),
-                _ => return Err(Error::UnknownIndexPart(name.into())),
-            }
-        })
-    }
-}
-
-#[derive(Hash, Ord, PartialOrd, Eq, PartialEq, Debug, Clone, Copy)]
-enum Stemmer {
-    Krovetz,
-    Porter2,
-    Null,
-}
-impl Default for Stemmer {
-    fn default() -> Self {
-        // Until we have a stemmer...
-        Self::Null
-    }
-}
-impl Stemmer {
-    fn from_str(name: &str) -> Result<Stemmer, Error> {
-        Ok(match name {
-            "krovetz" | "org.lemurproject.galago.core.parse.stem.KrovetzStemmer" => {
-                Stemmer::Krovetz
-            }
-            "porter" | "org.lemurproject.galago.core.parse.stem.Porter2Stemmer" => Stemmer::Porter2,
-            "" | "org.lemurproject.galago.core.parse.stem.NullStemmer" => Stemmer::Null,
-            other => return Err(Error::UnknownStemmer(other.into())),
-        })
-    }
-    fn from_class_name(class_name: Option<&str>) -> Result<Stemmer, Error> {
-        Ok(match class_name {
-            Some("org.lemurproject.galago.core.parse.stem.KrovetzStemmer") => Stemmer::Krovetz,
-            Some("org.lemurproject.galago.core.parse.stem.Porter2Stemmer") => Stemmer::Porter2,
-            Some("org.lemurproject.galago.core.parse.stem.NullStemmer") => Stemmer::Null,
-            None => Stemmer::Null,
-            Some(other) => return Err(Error::UnknownStemmer(other.into())),
-        })
-    }
-}
-
-fn is_btree(path: &Path) -> bool {
-    match open_file_magic(path, MAGIC_NUMBER) {
-        Ok(_) => true,
-        Err(_) => false,
-    }
 }
 
 impl Index {
@@ -141,11 +47,12 @@ impl Index {
                     )?;
                     let name = reader.file_name()?;
                     let field = GalagoField::from_file_name(name)?;
-                    if field.0 != stemmer {
+                    if field.stemmer() != stemmer {
                         return Err(Error::UnknownIndexPart(name.to_string())).map_err(|e| {
                             e.with_context(format!(
                                 "Name implies {:?} but manifest has {:?}",
-                                field.0, stemmer
+                                field.stemmer(),
+                                stemmer
                             ))
                         });
                     }
@@ -211,7 +118,7 @@ impl Index {
 
     fn lengths_for_field(&self, field: Option<&str>) -> Result<LengthsPostings, Error> {
         let actual = GalagoField::from_str(field)?;
-        if let Some(value) = self.lengths.find_str(&actual.1)? {
+        if let Some(value) = self.lengths.find_str(actual.name())? {
             Ok(LengthsPostings::new(value)?)
         } else {
             Err(Error::MissingField).map_err(|e| {
@@ -228,11 +135,11 @@ impl Index {
     ) -> Result<Option<Box<dyn EvalNode>>, Error> {
         let part = self.postings_for_field(field)?;
         if let Some(value) = part.find_str(term)? {
+            let postings = PositionsPostings::new(value)?;
             match needed {
-                DataNeeded::Counts | DataNeeded::Positions => {
-                    Ok(Some(Box::new(PositionsPostingsIter::new(value)?)))
-                }
-                DataNeeded::Docs => Ok(Some(Box::new(DocsIter::new(value)?))),
+                DataNeeded::Positions => Ok(Some(Box::new(postings.iterator()?))),
+                DataNeeded::Counts => Ok(Some(Box::new(postings.counts()?))),
+                DataNeeded::Docs => Ok(Some(Box::new(postings.docs()?))),
             }
         } else {
             Ok(None)
@@ -252,7 +159,7 @@ pub fn expr_to_eval(e: &QExpr, context: &mut Index) -> Result<Box<dyn EvalNode>,
                 term.as_str(),
                 field.as_ref().map(|f| f.as_str()),
                 // Assume the worst here:
-                data_needed.unwrap_or(DataNeeded::Positions),
+                data_needed.unwrap_or(DataNeeded::Counts),
             )? {
                 Some(postings) => Ok(postings),
                 None => Ok(Box::new(MissingTermEval)),
@@ -348,7 +255,7 @@ pub fn expr_to_mover(e: &QExpr, context: &mut Index) -> Result<MoverType, Error>
                 term.as_str(),
                 field.as_ref().map(|f| f.as_str()),
                 // Assume the worst here:
-                data_needed.unwrap_or(DataNeeded::Positions),
+                data_needed.unwrap_or(DataNeeded::Docs),
             )? {
                 Some(postings) => MoverType::RealMover(postings),
                 None => MoverType::EmptyMover,

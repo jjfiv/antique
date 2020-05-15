@@ -12,6 +12,14 @@ use std::{
     str,
 };
 
+/// Used externally by Index.
+pub fn is_btree(path: &Path) -> bool {
+    match open_file_magic(path, MAGIC_NUMBER) {
+        Ok(_) => true,
+        Err(_) => false,
+    }
+}
+
 // Notes on the format:
 // Java's DataInputStream/DataOutputStream classes write data as big-endian.
 

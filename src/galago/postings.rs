@@ -260,6 +260,21 @@ impl PositionsPostings {
             document_index: 0,
         })
     }
+    pub fn counts(self) -> Result<CountsIter, Error> {
+        let postings = self;
+        let mut documents = postings.source.substream(postings.documents);
+        let mut counts = postings.source.substream(postings.counts);
+        let start = documents.read_vbyte()?;
+        let current_count = counts.read_vbyte()? as u32;
+        Ok(CountsIter {
+            documents,
+            counts,
+            postings,
+            current_document: DocId(start),
+            current_count,
+            document_index: 0,
+        })
+    }
     pub fn iterator(self) -> Result<PositionsPostingsIter, Error> {
         let postings = self;
         let mut iter = PositionsPostingsIter {
@@ -398,6 +413,55 @@ impl EvalNode for PositionsPostingsIter {
     //}
 }
 
+pub struct CountsIter {
+    postings: PositionsPostings,
+    documents: ArcInputStream,
+    counts: ArcInputStream,
+    document_index: u64,
+    current_document: DocId,
+    current_count: u32,
+}
+
+impl EvalNode for CountsIter {
+    fn current_document(&self) -> DocId {
+        self.current_document
+    }
+    fn sync_to(&mut self, document: DocId) -> Result<DocId, Error> {
+        // Linear search through the postings-list:
+        // Don't have to check for done here because of u64::max trick.
+        while document > self.current_document && self.document_index < self.postings.document_count
+        {
+            self.document_index += 1;
+            if self.document_index >= self.postings.document_count {
+                self.current_document = DocId::no_more();
+                break;
+            }
+
+            // Step forward:
+            self.current_document.0 += self.documents.read_vbyte()?;
+            self.current_count = self.counts.read_vbyte()? as u32;
+        }
+
+        Ok(self.current_document)
+    }
+    fn count(&mut self, doc: DocId) -> u32 {
+        if self.matches(doc) {
+            self.current_count
+        } else {
+            0
+        }
+    }
+    fn score(&mut self, _doc: DocId) -> f32 {
+        todo!()
+    }
+    fn matches(&mut self, doc: DocId) -> bool {
+        self.sync_to(doc).unwrap() == doc
+    }
+    fn estimate_df(&self) -> u64 {
+        self.postings.document_count
+    }
+}
+
 pub struct DocsIter {
     postings: PositionsPostings,
     documents: ArcInputStream,
@@ -431,14 +495,14 @@ impl EvalNode for DocsIter {
 
         Ok(self.current_document)
     }
-    fn count(&mut self, doc: DocId) -> u32 {
+    fn count(&mut self, _doc: DocId) -> u32 {
         todo!()
     }
-    fn score(&mut self, doc: DocId) -> f32 {
+    fn score(&mut self, _doc: DocId) -> f32 {
         todo!()
     }
     fn matches(&mut self, doc: DocId) -> bool {
-        todo!()
+        self.sync_to(doc).unwrap() == doc
     }
     fn estimate_df(&self) -> u64 {
         self.postings.document_count
