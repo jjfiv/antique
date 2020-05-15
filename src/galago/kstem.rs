@@ -613,14 +613,74 @@ impl<'t> KStemState<'t> {
 
         // default: remove -ly
         self.word.truncate(j + 1);
-
-        // TODO
     }
+
     fn endings_al(&mut self) {
+        if self.word.len() < 4 {
+            return;
+        }
         if !self.ends_in("al") {
             return;
         }
-        // TODO
+        let j = self.j;
+        self.word.truncate(j + 1);
+        if self.lookup() {
+            return;
+        }
+
+        // allow for doubled consonant
+        if self.double_consonant(j) {
+            let last = self.word.pop().unwrap();
+            if self.lookup() {
+                return;
+            }
+            self.word.push(last);
+        }
+
+        // now try s/al/e/
+        self.word.push('e');
+        if self.lookup() {
+            return;
+        }
+        self.word.pop();
+
+        // now try um, e.g., optimal -> optimum
+        self.word.extend("um".chars());
+        if self.lookup() {
+            return;
+        }
+
+        // restore
+        self.word.truncate(j + 1);
+        self.word.extend("al".chars());
+
+        // try: 'ical'
+        if j > 0 && self.word[j - 1] == 'i' && self.word[j] == 'c' {
+            self.word.truncate(j - 1);
+            if self.lookup() {
+                return;
+            }
+
+            // bibliographical -> bibliography
+            self.word.push('y');
+            if self.lookup() {
+                return;
+            }
+            self.word.pop();
+
+            // now try e.g., bibliographic
+            self.word.extend("ic".chars());
+            return;
+        }
+
+        if self.word[j] == 'i' {
+            // sometimes we want to remove 'ial' endings.
+            self.word.truncate(j);
+            if self.lookup() {
+                return;
+            }
+            self.word.extend("ial".chars());
+        }
     }
     fn endings_ive(&mut self) {
         if !self.ends_in("ive") {
@@ -688,7 +748,7 @@ impl<'t> KStemState<'t> {
         return false;
     }
     fn double_consonant(&mut self, position: usize) -> bool {
-        if position < 1 {
+        if position < 2 {
             return false;
         }
         if self.word[position] != self.word[position - 1] {
@@ -858,6 +918,8 @@ mod tests {
         assert_eq!(stem("capacity"), "capacity");
         assert_eq!(stem("amplification"), "amplify");
         assert_eq!(stem("elimination"), "eliminate");
+        assert_eq!(stem("bibliographical"), "bibliography");
+        assert_eq!(stem("special"), "special");
     }
 
     #[test]
