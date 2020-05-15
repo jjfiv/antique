@@ -739,7 +739,30 @@ impl<'t> KStemState<'t> {
         if !self.ends_in("ize") {
             return;
         }
-        // TODO
+        let j = self.j;
+
+        // remove entirely?
+        self.word.truncate(j + 1);
+        if self.lookup() {
+            return;
+        }
+
+        // try an i at the end?
+        if self.double_consonant(j) {
+            self.word.truncate(j);
+            if self.lookup() {
+                return;
+            }
+            self.word.push(self.word[j - 1]);
+        }
+
+        // try adding 'e':
+        self.word.push('e');
+        if self.lookup() {
+            return;
+        }
+        self.word.pop();
+        self.word.extend("ize".chars());
     }
 
     fn endings_ment(&mut self) {
@@ -970,12 +993,17 @@ mod tests {
         assert_eq!(stem("special"), "special");
         assert_eq!(stem("injunctive"), "injunction");
         assert_eq!(stem("determinative"), "determine");
+
+        // making up words to hit branches.
+        assert_eq!(stem("abilityize"), "ability");
     }
 
     #[test]
-    fn test_wrong_comments() {
-        // examples that are actually in the exception dictionary...
+    fn test_no_change() {
+        assert_eq!(stem("lemmatize"), "lemmatize");
+        assert_eq!(stem("ize"), "ize");
         assert_eq!(stem("ability"), "ability");
+        assert_eq!(stem("itemize"), "itemize");
         assert_eq!(stem("nativity"), "nativity");
         assert_eq!(stem("complication"), "complication");
         assert_eq!(stem("resignation"), "resignation");
