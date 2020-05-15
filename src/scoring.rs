@@ -176,16 +176,16 @@ impl EvalNode for MissingTermEval {
     fn current_document(&self) -> DocId {
         DocId::no_more()
     }
-    fn sync_to(&mut self, document: DocId) -> Result<DocId, Error> {
+    fn sync_to(&mut self, _doc: DocId) -> Result<DocId, Error> {
         Ok(DocId::no_more())
     }
-    fn count(&mut self, doc: DocId) -> u32 {
+    fn count(&mut self, _doc: DocId) -> u32 {
         0
     }
-    fn score(&mut self, doc: DocId) -> f32 {
+    fn score(&mut self, _doc: DocId) -> f32 {
         0.0
     }
-    fn matches(&mut self, doc: DocId) -> bool {
+    fn matches(&mut self, _doc: DocId) -> bool {
         false
     }
     fn estimate_df(&self) -> u64 {
@@ -194,11 +194,4 @@ impl EvalNode for MissingTermEval {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct VecMovement {
-        position: usize,
-        docs: Vec<u32>,
-    }
-}
+mod tests {}

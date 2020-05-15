@@ -184,7 +184,6 @@ impl Index {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lang::*;
 
     #[test]
     fn test_open() {

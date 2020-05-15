@@ -493,8 +493,75 @@ impl<'t> KStemState<'t> {
         if !self.ends_in("ion") {
             return;
         }
-        // TODO
+        // ization -> ize
+        if self.ends_in("ization") {
+            self.word.truncate(self.j + 3);
+            self.word.push('e');
+            return;
+        }
+        // ition -> e?
+        if self.ends_in("ition") {
+            self.word.truncate(self.j + 1);
+            self.word.push('e');
+            if self.lookup() {
+                return;
+            }
+            self.word.pop();
+            self.word.extend("ition".chars());
+        }
+        // ation
+        if self.ends_in("ation") {
+            self.word.truncate(self.j + 3);
+            self.word.push('e');
+            // elimination -> eliminate
+            if self.lookup() {
+                return;
+            }
+
+            self.word.truncate(self.j + 1);
+            self.word.push('e');
+            if self.lookup() {
+                return;
+            }
+            self.word.pop();
+
+            // resignation -> resign
+            self.word.truncate(self.j + 1);
+            if self.lookup() {
+                return;
+            }
+
+            self.word.extend("ation".chars());
+        }
+
+        // complication->complicate vs. comply
+        if self.ends_in("ication") {
+            self.word.truncate(self.j + 1);
+            self.word.push('y');
+            if self.lookup() {
+                return;
+            }
+            self.word.extend("ication".chars());
+        }
+
+        if self.ends_in("ion") {
+            self.word.truncate(self.j + 1);
+            // try an e instead.
+            self.word.push('e');
+            if self.lookup() {
+                return;
+            }
+            self.word.pop();
+
+            // try without:
+            if self.lookup() {
+                return;
+            }
+
+            self.word.extend("ion".chars());
+        }
     }
+
     fn endings_er_ar(&mut self) {
         if self.ends_in("er") {
             // TODO
@@ -785,11 +852,22 @@ mod tests {
         assert_eq!(stem("microcoding"), "microcode");
         assert_eq!(stem("footstamping"), "footstamp");
         assert_eq!(stem("decoupled"), "decouple");
-        assert_eq!(stem("ability"), "ability");
         assert_eq!(stem("reduceability"), "reduceable");
-        assert_eq!(stem("nativity"), "nativity");
         assert_eq!(stem("positivity"), "positive");
         assert_eq!(stem("immunity"), "immune");
         assert_eq!(stem("capacity"), "capacity");
+        assert_eq!(stem("amplification"), "amplify");
+        assert_eq!(stem("elimination"), "eliminate");
+    }
+
+    #[test]
+    fn test_wrong_comments() {
+        // examples that are actually in the exception dictionary...
+        assert_eq!(stem("ability"), "ability");
+        assert_eq!(stem("nativity"), "nativity");
+        assert_eq!(stem("complication"), "complication");
+        assert_eq!(stem("resignation"), "resignation");
+        assert_eq!(stem("definition"), "definition");
+        assert_eq!(stem("opposition"), "opposition");
     }
 }
