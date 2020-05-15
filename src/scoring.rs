@@ -38,7 +38,8 @@ impl BM25Eval {
             child,
             lengths,
             average_dl: stats.average_doc_length() as f32,
-            idf: idf.log2() as f32,
+            // Matching Galago, though log2 is probs faster:
+            idf: idf.ln() as f32,
         }
     }
 }

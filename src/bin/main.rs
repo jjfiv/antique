@@ -69,7 +69,7 @@ fn main() -> Result<(), Error> {
         let finish = start.elapsed();
         println!("Scored {} results in {:?}", total, finish);
         let results: Vec<ScoreDoc> = results.into_vec();
-        println!("{:?}", &results[..10])
+        println!("{:?}", &results[..std::cmp::min(results.len(), 10)])
     }
 
     Ok(())

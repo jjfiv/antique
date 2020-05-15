@@ -554,7 +554,7 @@ mod tests {
             let repr = doc.to_be_bytes();
 
             let stored = corpus.find_bytes(&repr).unwrap().unwrap();
-            let document = decompress_document(stored).unwrap();
+            let document = decompress_document(stored).unwrap().into_tokenized();
 
             let expected = fs::read_to_string(rel_path).unwrap();
             let mut tok = Tokenizer::new(&expected);
