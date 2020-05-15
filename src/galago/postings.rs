@@ -1,6 +1,6 @@
 use crate::galago::btree::ValueEntry;
 use crate::io_helper::{ArcInputStream, DataInputStream, InputStream, SliceInputStream};
-use crate::scoring::{EvalNode, Movement};
+use crate::scoring::{EvalNode, Explanation, Movement};
 use crate::{stats::CountStats, DocId, Error};
 use std::convert::TryInto;
 
@@ -117,6 +117,14 @@ impl LengthsPostings {
     }
 }
 impl EvalNode for LengthsPostings {
+    fn explain(&mut self, doc: DocId) -> Explanation {
+        let info = "lengths".into();
+        if self.matches(doc) {
+            Explanation::Match(self.count(doc) as f32, info, vec![])
+        } else {
+            Explanation::Miss(info, vec![])
+        }
+    }
     fn current_document(&self) -> DocId {
         // We're basically never done?
         self.current_document
@@ -372,6 +380,14 @@ impl PositionsPostingsIter {
 }
 
 impl EvalNode for PositionsPostingsIter {
+    fn explain(&mut self, doc: DocId) -> Explanation {
+        let info = "positions TODO".into();
+        if self.matches(doc) {
+            Explanation::Match(self.count(doc) as f32, info, vec![])
+        } else {
+            Explanation::Miss(info, vec![])
+        }
+    }
     fn current_document(&self) -> DocId {
         self.current_document
     }
@@ -423,6 +439,14 @@ pub struct CountsIter {
 }
 
 impl EvalNode for CountsIter {
+    fn explain(&mut self, doc: DocId) -> Explanation {
+        let info = "counts".into();
+        if self.matches(doc) {
+            Explanation::Match(self.count(doc) as f32, info, vec![])
+        } else {
+            Explanation::Miss(info, vec![])
+        }
+    }
     fn current_document(&self) -> DocId {
         self.current_document
     }
@@ -475,6 +499,14 @@ impl DocsIter {
 }
 
 impl EvalNode for DocsIter {
+    fn explain(&mut self, doc: DocId) -> Explanation {
+        let info = "docs".into();
+        if self.matches(doc) {
+            Explanation::Match(1.0, info, vec![])
+        } else {
+            Explanation::Miss(info, vec![])
+        }
+    }
     fn current_document(&self) -> DocId {
         self.current_document
     }

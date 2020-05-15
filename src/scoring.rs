@@ -1,5 +1,11 @@
 use crate::{stats::CountStats, DocId, Error};
 
+#[derive(Debug)]
+pub enum Explanation {
+    Miss(String, Vec<Explanation>),
+    Match(f32, String, Vec<Explanation>),
+}
+
 pub trait Movement {
     fn is_done(&self) -> bool;
     fn move_past(&mut self) -> Result<DocId, Error>;
@@ -12,6 +18,7 @@ pub trait EvalNode {
     fn score(&mut self, doc: DocId) -> f32;
     fn matches(&mut self, doc: DocId) -> bool;
     fn estimate_df(&self) -> u64;
+    fn explain(&mut self, doc: DocId) -> Explanation;
 }
 
 pub struct BM25Eval {
@@ -37,7 +44,7 @@ impl BM25Eval {
             k,
             child,
             lengths,
-            average_dl: stats.average_doc_length() as f32,
+            average_dl: stats.average_doc_length(),
             // Matching Galago, though log2 is probs faster:
             idf: idf.ln() as f32,
         }
@@ -45,6 +52,21 @@ impl BM25Eval {
 }
 
 impl EvalNode for BM25Eval {
+    fn explain(&mut self, doc: DocId) -> Explanation {
+        let info = format!(
+            "b: {}, k: {}, idf: {} len: {} avgdl: {}",
+            self.b,
+            self.k,
+            self.idf,
+            self.lengths.count(doc),
+            self.average_dl,
+        );
+        if self.matches(doc) {
+            Explanation::Match(self.score(doc), info, vec![self.child.explain(doc)])
+        } else {
+            Explanation::Miss(info, vec![self.child.explain(doc)])
+        }
+    }
     fn current_document(&self) -> DocId {
         self.child.current_document()
     }
@@ -61,7 +83,7 @@ impl EvalNode for BM25Eval {
         let length = self.lengths.count(doc) as f32;
         let num = count * (k + 1.0);
         let denom = count + (k * (1.0 - b + (b * length / self.average_dl)));
-        self.idf * (num / denom)
+        self.idf * num / denom
     }
     fn matches(&mut self, doc: DocId) -> bool {
         self.child.matches(doc)
@@ -82,6 +104,15 @@ impl WeightedSumEval {
 }
 
 impl EvalNode for WeightedSumEval {
+    fn explain(&mut self, doc: DocId) -> Explanation {
+        let info = format!("weights: {:?}", self.weights);
+        let children = self.children.iter_mut().map(|c| c.explain(doc)).collect();
+        if self.matches(doc) {
+            Explanation::Match(self.score(doc), info, children)
+        } else {
+            Explanation::Miss(info, children)
+        }
+    }
     fn current_document(&self) -> DocId {
         self.children
             .iter()
@@ -139,6 +170,9 @@ where
 pub struct MissingTermEval;
 
 impl EvalNode for MissingTermEval {
+    fn explain(&mut self, _doc: DocId) -> Explanation {
+        Explanation::Miss("MissingTermEval".into(), vec![])
+    }
     fn current_document(&self) -> DocId {
         DocId::no_more()
     }

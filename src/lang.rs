@@ -105,6 +105,19 @@ pub struct TextExpr {
     pub stats_field: Option<String>,
     pub data_needed: Option<DataNeeded>,
 }
+impl TextExpr {
+    pub fn new<S>(term: S) -> TextExpr
+    where
+        S: Into<String>,
+    {
+        TextExpr {
+            term: term.into(),
+            field: None,
+            stats_field: None,
+            data_needed: None,
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LengthsExpr {
     pub field: String,
@@ -369,5 +382,17 @@ impl QExpr {
             k: None,
             stats: None,
         })
+    }
+}
+
+// Adding these as-needed. TODO: a macro?
+impl From<TextExpr> for QExpr {
+    fn from(e: TextExpr) -> Self {
+        QExpr::Text(e)
+    }
+}
+impl From<BM25Expr> for QExpr {
+    fn from(e: BM25Expr) -> Self {
+        QExpr::BM25(e)
     }
 }

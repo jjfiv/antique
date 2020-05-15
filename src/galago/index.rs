@@ -184,10 +184,66 @@ impl Index {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lang::*;
 
     #[test]
     fn test_open() {
-        let index = Index::open(Path::new("data/index.galago")).unwrap();
+        let mut index = Index::open(Path::new("data/index.galago")).unwrap();
         assert!(index.corpus.is_some());
+
+        // Isn't nice that listing directories has no inherent order?
+        assert_eq!(
+            Some("/home/jfoley/antique/data/inputs/ch4.txt"),
+            index.lookup_name_for_id(DocId(0)).unwrap().as_deref()
+        );
+        assert_eq!(
+            Some(DocId(0)),
+            index
+                .lookup_id_for_name("/home/jfoley/antique/data/inputs/ch4.txt")
+                .unwrap()
+        );
+        assert_eq!(None, index.lookup_id_for_name("missing").unwrap());
+    }
+
+    #[test]
+    fn test_stats() {
+        // cmp to: galago stats --index= data/index.galago/ --node+ "#counts:the()"
+        // also: galago stats --index= data/index.galago/
+        let mut index = Index::open(Path::new("data/index.galago")).unwrap();
+        let the_term: QExpr = TextExpr::new("the").into();
+        let stats = index.count_stats(&the_term).unwrap();
+        assert_eq!(stats.document_frequency, 5);
+        assert_eq!(stats.document_count, 6);
+        assert_eq!(stats.collection_frequency, 179);
+        assert_eq!(stats.collection_length, 5516);
+    }
+
+    #[test]
+    fn test_bm25() {
+        // see: galago debug-query --index= data/index.galago/ --query= '#bm25:b=0.75:k=1.2(#counts:part=postings:the())' --docid=/home/jfoley/antique/data/inputs/ch1.txt
+        let mut index = Index::open(Path::new("data/index.galago")).unwrap();
+        let q: QExpr = BM25Expr {
+            b: Some(0.75),
+            k: Some(1.2),
+            stats: None,
+            child: Box::new(TextExpr::new("the").into()),
+        }
+        .into();
+
+        // Create a scorer:
+        let mut scorer = index.eval(&q).unwrap();
+
+        let ch1 = DocId(1);
+        // Go to "ch1.txt"
+        assert_eq!(ch1, scorer.sync_to(ch1).unwrap());
+
+        let score = scorer.score(ch1);
+        println!("actual-score: {}", score);
+
+        //Match(0.07647033, "b: 0.75, k: 1.2, idf: 0.087011375 length: 887", [Match(18.0, "counts", [])])
+        println!("{:?}", scorer.explain(ch1));
+        let expected = 0.17975731531052844;
+        let diff = (expected - score).abs();
+        assert!(diff < 0.00001);
     }
 }

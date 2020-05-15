@@ -11,7 +11,7 @@ impl CountStats {
         if self.document_count == 0 {
             0.0
         } else {
-            let cf = self.collection_frequency as f64;
+            let cf = self.collection_length as f64;
             let dc = self.document_count as f64;
             (cf / dc) as f32
         }
