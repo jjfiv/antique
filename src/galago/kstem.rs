@@ -801,13 +801,42 @@ impl<'t> KStemState<'t> {
         if !(self.word[j] == 'e' || self.word[j] == 'a') {
             return;
         }
-        // TODO
+        // convert 'ncy' to 'nt':
+        self.word.pop();
+        self.word.pop();
+        self.word.push('t');
+        if self.lookup() {
+            return;
+        }
+
+        // convert by default to 'nce':
+        self.word[j + 2] = 'c';
+        self.word.push('e');
     }
+
     fn endings_nce(&mut self) {
         if !self.ends_in("nce") {
             return;
         }
-        // TODO
+        let j = self.j;
+        if !(self.word[j] == 'e' || self.word[j] == 'a') {
+            return;
+        }
+        self.word.truncate(j + 1);
+        let a_or_e = self.word.pop().unwrap();
+        // adherence->adhere
+        self.word.push('e');
+        if self.lookup() {
+            return;
+        }
+        self.word.pop();
+        // disappearance -> disappear
+        if self.lookup() {
+            return;
+        }
+
+        self.word.push(a_or_e);
+        self.word.extend("nce".chars());
     }
 
     fn vowel_in_stem(&mut self) -> bool {
@@ -999,7 +1028,14 @@ mod tests {
     }
 
     #[test]
+    fn test_kstem_bugs() {
+        assert_eq!(stem("luancy"), "luance");
+        assert_eq!(stem("adherancy"), "adhere");
+    }
+
+    #[test]
     fn test_no_change() {
+        assert_eq!(stem("adherence"), "adherence");
         assert_eq!(stem("lemmatize"), "lemmatize");
         assert_eq!(stem("ize"), "ize");
         assert_eq!(stem("ability"), "ability");
