@@ -84,106 +84,88 @@ impl<'t> KStemState<'t> {
             return found;
         }
 
-        println!("stemming: {}, {:?}", self.original, self.word);
         // Try all endings sequentially and break when found:
         self.plural();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.past_tense();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.aspect();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_ity();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_ness();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_ion();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_er_ar();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_ly();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_al();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_ive();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_ize();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_ment();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_ble();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_ism();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_ic();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_ncy();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
 
         self.endings_nce();
-        println!("stemming: {}, {:?}", self.original, self.word);
         if let Some(found) = self.check_done() {
             return found;
         }
@@ -784,5 +766,30 @@ mod tests {
                 panic!("Stemmer TODO: {} -> {}", lhs, rhs);
             }
         }
+    }
+
+    #[test]
+    fn tests_from_comments() {
+        assert_eq!(stem("aides"), "aide");
+        assert_eq!(stem("aided"), "aid");
+        assert_eq!(stem("crosses"), "cross");
+        assert_eq!(stem("lacrosse"), "lacrosse");
+        assert_eq!(stem("fled"), "flee");
+        assert_eq!(stem("died"), "die");
+        assert_eq!(stem("backfilled"), "backfill");
+        assert_eq!(stem("underfilled"), "underfill");
+        assert_eq!(stem("aging"), "age");
+        assert_eq!(stem("fingerspelling"), "fingerspell");
+        assert_eq!(stem("bookselling"), "booksell");
+        assert_eq!(stem("mislabelling"), "mislabell");
+        assert_eq!(stem("microcoding"), "microcode");
+        assert_eq!(stem("footstamping"), "footstamp");
+        assert_eq!(stem("decoupled"), "decouple");
+        assert_eq!(stem("ability"), "ability");
+        assert_eq!(stem("reduceability"), "reduceable");
+        assert_eq!(stem("nativity"), "nativity");
+        assert_eq!(stem("positivity"), "positive");
+        assert_eq!(stem("immunity"), "immune");
+        assert_eq!(stem("capacity"), "capacity");
     }
 }
