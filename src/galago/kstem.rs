@@ -103,7 +103,90 @@ impl<'t> KStemState<'t> {
         if let Some(found) = self.check_done() {
             return found;
         }
+
+        self.endings_ity();
         println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+
+        self.endings_ness();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+
+        self.endings_ion();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+
+        self.endings_er_ar();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+
+        self.endings_ly();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+
+        self.endings_al();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+
+        self.endings_ive();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+
+        self.endings_ize();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+
+        self.endings_ment();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+
+        self.endings_ble();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+
+        self.endings_ism();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+
+        self.endings_ic();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+
+        self.endings_ncy();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
+
+        self.endings_nce();
+        println!("stemming: {}, {:?}", self.original, self.word);
+        if let Some(found) = self.check_done() {
+            return found;
+        }
 
         self.word.iter().collect()
     }
@@ -337,6 +420,76 @@ impl<'t> KStemState<'t> {
             self.word.push('e');
         }
     }
+
+    fn endings_ity(&mut self) {
+        if !self.ends_in("ity") {
+            return;
+        }
+
+        self.word.truncate(self.j + 1);
+        if self.lookup() {
+            return;
+        }
+
+        // remove 'ity' and replace with 'e'
+        self.word.push('e');
+        if self.lookup() {
+            return;
+        }
+
+        // restore:
+        self.word.pop();
+        self.word.extend("ity".chars());
+
+        // the -ability and -ibility endings are highly productive, so just accept them
+        if self.j > 0 && self.word[self.j - 1] == 'i' && self.word[self.j] == 'l' {
+            self.word.truncate(self.j - 1);
+            // convert to -ble:
+            self.word.extend("le".chars());
+            return;
+        }
+
+        // same for -ivity:
+        if self.j > 0 && self.word[self.j - 1] == 'i' && self.word[self.j] == 'v' {
+            self.word.truncate(self.j + 1);
+            self.word.push('e');
+            return;
+        }
+
+        // same for -ality:
+        if self.j > 0 && self.word[self.j - 1] == 'a' && self.word[self.j] == 'l' {
+            self.word.truncate(self.j + 1);
+            return;
+        }
+
+        /*
+         * if the root isn't in the dictionary, and the variant *is* there, then use the
+         * variant. This allows `immunity'->`immune', but prevents `capacity'->`capac'.
+         * If neither the variant nor the root form are in the dictionary, then remove
+         * the ending as a default
+         */
+
+        if self.lookup() {
+            return;
+        }
+
+        // default, remove the -ity.
+        self.word.truncate(self.j + 1);
+    } // endings_ity
+
+    fn endings_ness(&mut self) {}
+    fn endings_ion(&mut self) {}
+    fn endings_er_ar(&mut self) {}
+    fn endings_ly(&mut self) {}
+    fn endings_al(&mut self) {}
+    fn endings_ive(&mut self) {}
+    fn endings_ize(&mut self) {}
+    fn endings_ment(&mut self) {}
+    fn endings_ble(&mut self) {}
+    fn endings_ism(&mut self) {}
+    fn endings_ic(&mut self) {}
+    fn endings_ncy(&mut self) {}
+    fn endings_nce(&mut self) {}
 
     fn vowel_in_stem(&mut self) -> bool {
         for i in 0..self.j + 1 {
