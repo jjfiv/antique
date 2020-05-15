@@ -46,7 +46,6 @@ const MAX_WORD_LEN: usize = 100;
 use super::kstem_data;
 
 struct KStemState<'t> {
-    stem_it: bool,
     word: Vec<char>,
     lookup_buffer: String,
     original: &'t str,
@@ -55,10 +54,7 @@ struct KStemState<'t> {
 }
 
 pub fn stem(token: &str) -> String {
-    let out = String::new();
-
     let mut state = KStemState {
-        stem_it: true,
         // utf-32 vec: for ease of translation.
         word: Vec::new(),
         // utf-8 vec: for hashmap lookups.
@@ -67,18 +63,6 @@ pub fn stem(token: &str) -> String {
         j: 0,
     };
     state.stem()
-
-    // if let Some(maybe_default) = DICTIONARY.get(token) {
-    //     if let Some(entry) = maybe_default {
-    //         if entry.exception {
-    //             return token.into();
-    //         } else {
-    //             return entry.root.into();
-    //         }
-    //     }
-    // }
-
-    // out
 }
 
 impl<'t> KStemState<'t> {
@@ -161,6 +145,11 @@ impl<'t> KStemState<'t> {
         self.lookup_buffer.extend(&self.word);
         DICTIONARY.get(self.lookup_buffer.as_str()).is_some()
     }
+    fn entry(&mut self) -> Option<&DictEntry> {
+        self.lookup_buffer.clear();
+        self.lookup_buffer.extend(&self.word);
+        DICTIONARY.get(self.lookup_buffer.as_str())
+    }
 
     fn set_suffix(&mut self, s: &str) {
         self.word.truncate(self.j + 1);
@@ -208,12 +197,129 @@ impl<'t> KStemState<'t> {
         }
     } // plural
 
-    fn past_tense(&mut self) {}
+    fn past_tense(&mut self) {
+        // Handle words less than 5 letters with a direct mapping This prevents (fled -> fl).
+        if self.word.len() <= 4 {
+            return;
+        }
+
+        if self.ends_in("ied") {
+            self.word.truncate(self.j + 3);
+            if self.lookup()
+            /* we almost always want to convert -ied to -y, but */
+            {
+                return; /* this isn't true for short words (died->die) */
+            }
+            /* I don't know any long words that this applies to, */
+            self.word.push('d'); /* but just in case... */
+            self.set_suffix("y");
+            return;
+        }
+
+        /* the vowelInStem() is necessary so we don't stem acronyms */
+        if self.ends_in("ed") && self.vowel_in_stem() {
+            /* see if the root ends in `e' */
+            self.word.truncate(self.j + 2);
+
+            if let Some(entry) = self.entry() {
+                if !entry.exception() {
+                    return;
+                }
+            }
+
+            /* try removing the "ed" */
+            self.word.truncate(self.j + 1);
+            if self.lookup() {
+                return;
+            }
+
+            /*
+             * try removing a doubled consonant. if the root isn't found in the dictionary,
+             * the default is to leave it doubled. This will correctly capture `backfilled'
+             * -> `backfill' instead of `backfill' -> `backfille', and seems correct most of
+             * the time
+             */
+
+            if self.double_consonant(self.k()) {
+                self.word.truncate(self.k());
+                if self.lookup() {
+                    return;
+                }
+                self.word.push(*self.word.last().unwrap());
+                return;
+            }
+
+            /* if we have a `un-' prefix, then leave the word alone */
+            /* (this will sometimes screw up with `under-', but we */
+            /* will take care of that later) */
+
+            if self.word[..2] == ['u', 'n'] {
+                self.word.push('e');
+                self.word.push('d');
+                return;
+            }
+
+            /*
+             * it wasn't found by just removing the `d' or the `ed', so prefer to end with
+             * an `e' (e.g., `microcoded' -> `microcode').
+             */
+
+            self.word.truncate(self.j + 1);
+            self.word.push('e');
+            return;
+        }
+    } // past_tense
+
+    fn vowel_in_stem(&mut self) -> bool {
+        for i in 0..self.j + 1 {
+            if self.is_vowel(i) {
+                return true;
+            }
+        }
+        return false;
+    }
+    fn double_consonant(&mut self, position: usize) -> bool {
+        if position < 1 {
+            return false;
+        }
+        if self.word[position] != self.word[position - 1] {
+            false
+        } else {
+            self.is_consonant(position - 1)
+        }
+    }
+
+    fn is_vowel(&mut self, position: usize) -> bool {
+        !self.is_consonant(position)
+    }
+    // Recursion!
+    fn is_consonant(&mut self, position: usize) -> bool {
+        let ch = self.word[position];
+        match ch {
+            'a' | 'e' | 'i' | 'o' | 'u' => false,
+            'y' => {
+                if position == 0 {
+                    true
+                } else {
+                    !self.is_consonant(position - 1)
+                }
+            }
+            _ => true,
+        }
+    } // is_consonant
 }
 
 enum DictEntry {
     Special { root: &'static str, exception: bool },
     Regular,
+}
+impl DictEntry {
+    fn exception(&self) -> bool {
+        match self {
+            Self::Special { exception, .. } => *exception,
+            _ => false,
+        }
+    }
 }
 
 static DICTIONARY: Lazy<HashMap<&str, DictEntry>> = Lazy::new(|| {
@@ -257,3 +363,65 @@ static DICTIONARY: Lazy<HashMap<&str, DictEntry>> = Lazy::new(|| {
 
     builder
 });
+
+#[cfg(test)]
+mod tests {
+    // thanks sjh for the tests:
+    use super::*;
+    use crate::galago::tokenizer::tokenize_to_terms;
+
+    const DOC: &str = r#"
+        Call me Ishmael. Some years ago never mind how long precisely 
+        having little or no money in my purse, and nothing particular to interest 
+        me on shore, I thought I would sail about a little and see the watery part 
+        of the world. It is a way I have of driving off the spleen and regulating 
+        the circulation. Whenever I find myself growing grim about the mouth; 
+        whenever it is a damp, drizzly November in my soul; whenever I find myself 
+        involuntarily pausing before coffin warehouses, and bringing up the rear of 
+        every funeral I meet; and especially whenever my hypos get such an upper 
+        hand of me, that it requires a strong moral principle to prevent me from 
+        deliberately stepping into the street, and methodically knocking people's 
+        hats off then, I account it high time to get to sea as soon as I can. This 
+        is my substitute for pistol and ball. With a philosophical flourish Cato 
+        throws himself upon his sword; I quietly take to the ship. There is nothing 
+        surprising in this. If they but knew it, almost all men in their degree, 
+        some time or other, cherish very nearly the same feelings towards the ocean 
+        with me.
+    "#;
+
+    const EXPECTED: &str = r#"
+        call me ishmael some years ago never mind how 
+        long precisely have little or no money in my
+        purse and nothing particular to interest me on shore i
+        thought i would sail about a little and see the
+        watery part of the world it is a way i
+        have of driving off the spleen and regulate the circulation
+        whenever i find myself grow grim about the mouth whenever
+        it is a damp drizzle november in my soul whenever
+        i find myself involuntary pause before coffin warehouse and bring
+        up the rear of every funeral i meet and especially
+        whenever my hypo get such an upper hand of me
+        that it require a strong moral principle to prevent me
+        from deliberate step into the street and methodical knock people
+        hat off then i account it high time to
+        get to sea as soon as i can this is
+        my substitute for pistol and ball with a philosophical flourish
+        cato throw himself upon his sword i quiet take to
+        the ship there is nothing surprising in this if they
+        but knew it almost all men in their degree some
+        time or other cherish very nearly the same feelings towards
+        the ocean with me
+    "#;
+
+    #[test]
+    fn test_a_book_about_a_fish() {
+        let terms = tokenize_to_terms(DOC);
+        let expected: Vec<&str> = EXPECTED.trim().split_ascii_whitespace().collect();
+
+        for (lhs, rhs) in terms.iter().zip(expected.iter()) {
+            if lhs != rhs {
+                panic!("Stemmer TODO: {} -> {}", lhs, rhs);
+            }
+        }
+    }
+}
