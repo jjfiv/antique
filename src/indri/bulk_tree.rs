@@ -78,6 +78,9 @@ impl BulkTreeReader {
         // Most of the work in BulkTree::fetch involves managing the cache. Since we're mmapping the file; we can trust the OS/FS cache for now.
         return Ok(&self.mmap[start..end]);
     }
+    pub fn find_str(&self, key: &str) -> Result<Option<Bytes>, Error> {
+        self.find_value(key.as_bytes())
+    }
     pub fn find_value(&self, key: &[u8]) -> Result<Option<Bytes>, Error> {
         let mut next_id = self.root_id();
         loop {
@@ -218,6 +221,51 @@ impl<'b> BulkTreeBlock<'b> {
     }
 }
 
+#[derive(Debug)]
+struct TermFieldStats {
+    total_count: u64,
+    doc_count: u32,
+}
+#[derive(Debug)]
+struct DiskTermData {
+    corpus_total_count: u64,
+    corpus_doc_count: u32,
+    max_doc_len: u32,
+    min_doc_len: u32,
+    field_stats: Vec<TermFieldStats>,
+}
+
+impl DiskTermData {
+    fn from_stream<I>(input: &mut I, num_fields: usize) -> Result<DiskTermData, Error>
+    where
+        I: DataInputStream,
+    {
+        let corpus_total_count = input.read_vbyte()?;
+        let corpus_doc_count = input.read_vbyte()? as u32;
+
+        let max_doc_len = input.read_vbyte()? as u32;
+        let min_doc_len = input.read_vbyte()? as u32;
+
+        let mut field_stats = Vec::with_capacity(num_fields);
+        for _ in 0..num_fields {
+            let total_count = input.read_vbyte()?;
+            let doc_count = input.read_vbyte()? as u32;
+            field_stats.push(TermFieldStats {
+                total_count,
+                doc_count,
+            })
+        }
+
+        Ok(DiskTermData {
+            corpus_total_count,
+            corpus_doc_count,
+            max_doc_len,
+            min_doc_len,
+            field_stats,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,5 +292,19 @@ mod tests {
         lookup("protopin");
         lookup("postcolon");
         lookup("zyzzogeton");
+    }
+
+    #[test]
+    fn test_in_index() {
+        let str_to_term_id =
+            BulkTreeReader::open(Path::new("data/index.indri/index/0/infrequentString")).unwrap();
+        let data = str_to_term_id.find_str("the").unwrap().unwrap();
+        let mut stream = data.stream();
+        let term_info = DiskTermData::from_stream(&mut stream, 0).unwrap();
+
+        assert_eq!(term_info.corpus_doc_count, 5);
+        assert_eq!(term_info.max_doc_len, 1717);
+        assert_eq!(term_info.min_doc_len, 831);
+        println!("{:?}", term_info);
     }
 }

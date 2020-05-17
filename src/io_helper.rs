@@ -31,6 +31,10 @@ impl Bytes {
     pub fn cmp(&self, rhs: &[u8]) -> Ordering {
         self.data.as_ref().cmp(rhs)
     }
+
+    pub fn stream(&self) -> SliceInputStream {
+        SliceInputStream::new(self.as_bytes())
+    }
 }
 impl fmt::Debug for Bytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -50,6 +54,7 @@ pub trait InputStream {
 
 pub trait DataInputStream {
     fn read_vbyte(&mut self) -> Result<u64, Error>;
+    fn read_signed_vbyte(&mut self) -> Result<i64, Error>;
     fn read_u64(&mut self) -> Result<u64, Error>;
     fn read_u32(&mut self) -> Result<u32, Error>;
 }
@@ -74,6 +79,17 @@ where
             bit_p += 7;
         }
         Err(Error::InternalSizeErr)
+    }
+    /// Indri-Style signed vbytes (lowest bit as sign).
+    fn read_signed_vbyte(&mut self) -> Result<i64, Error> {
+        let raw = self.read_vbyte()?;
+        // RVLCompress::unfoldNegatives
+        let keep_bits = (raw / 2) as i64;
+        if raw & 1 > 0 {
+            Ok(-keep_bits)
+        } else {
+            Ok(keep_bits)
+        }
     }
     fn read_u64(&mut self) -> Result<u64, Error> {
         let exact = self.advance(8)?;
