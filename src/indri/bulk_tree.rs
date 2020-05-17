@@ -269,6 +269,8 @@ impl DiskTermData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use io::BufRead;
+    use std::io;
     use std::str;
 
     #[test]
@@ -279,19 +281,16 @@ mod tests {
             let str_val = str::from_utf8(val.as_bytes()).unwrap();
             let num_val = str_val.parse::<usize>().unwrap();
 
-            if num_val != key.len() {
+            // because we wrote the length from python, we count chars here, not bytes.
+            if num_val != key.chars().count() {
                 panic!("key: {}, str_val: {}, num_val: {}", key, str_val, num_val);
             }
         };
 
-        lookup("a");
-        lookup("antidisciplinarian");
-        lookup("clarifiant");
-        lookup("macrocarpous");
-        lookup("hexadic");
-        lookup("protopin");
-        lookup("postcolon");
-        lookup("zyzzogeton");
+        let f = fs::File::open("data/vocab.txt").unwrap();
+        for line in io::BufReader::new(f).lines() {
+            lookup(line.unwrap().trim());
+        }
     }
 
     #[test]
@@ -302,9 +301,10 @@ mod tests {
         let mut stream = data.stream();
         let term_info = DiskTermData::from_stream(&mut stream, 0).unwrap();
 
+        println!("{:?}", term_info);
+
         assert_eq!(term_info.corpus_doc_count, 5);
         assert_eq!(term_info.max_doc_len, 1717);
         assert_eq!(term_info.min_doc_len, 831);
-        println!("{:?}", term_info);
     }
 }

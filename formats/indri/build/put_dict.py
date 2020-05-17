@@ -12,7 +12,7 @@ def allow_time(p):
 
 PUTS = []
 
-with open("/usr/share/dict/words") as dictionary:
+with open("../../../data/vocab.txt") as dictionary:
     for line in dictionary:
         word = line.strip().lower()
         cmd = "put {} {}\n".format(word, len(word))
