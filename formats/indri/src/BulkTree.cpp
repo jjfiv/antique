@@ -541,6 +541,8 @@ bool indri::file::BulkTreeReader::get( const char* key, int keyLength, char* val
       return false;
 
     assert( actual == sizeof(nextID) );
+
+    return true;
   }
 
   // now we're at a leaf
@@ -666,7 +668,9 @@ void indri::file::BulkTreeIterator::nextEntry() {
   }
 }
 
-bool indri::file::BulkTreeIterator::get( char* key, int keyLength, int& keyActual, char* value, int valueLength, int& valueActual ) {
+bool indri::file::BulkTreeIterator::get( 
+  char* key, int keyLength, int& keyActual, 
+  char* value, int valueLength, int& valueActual ) {
   if( finished() )
     return false;
   

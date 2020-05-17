@@ -117,10 +117,11 @@ namespace lemur
       LemurErrorType _code;
     };
 
+// Make all these errors aborts for our purposes.
 #define LEMUR_ABORT( e )                  { std::cerr << e.what() << std::endl; exit(-1); }
-#define LEMUR_THROW_LINE( code, text, file, line )  throw lemur::api::Exception( file, line, std::string() + text, (code) )
+#define LEMUR_THROW_LINE( code, text, file, line )  LEMUR_ABORT(lemur::api::Exception( file, line, std::string() + text, (code) ))
 #define LEMUR_THROW(code, text)  LEMUR_THROW_LINE(code, text, __FILE__, __LINE__)
-#define LEMUR_RETHROW_LINE( e, text, file, line )   throw lemur::api::Exception( file, line, (std::string() + text), (e) )
+#define LEMUR_RETHROW_LINE( e, text, file, line )   LEMUR_ABORT(lemur::api::Exception( file, line, (std::string() + text), (e) ))
 #define LEMUR_RETHROW( e, text)  LEMUR_RETHROW_LINE(e, text, __FILE__, __LINE__)
 
 #define LEMUR_GENERIC_ERROR               ((lemur::api::LemurErrorType)0xFFFFFFFF)
