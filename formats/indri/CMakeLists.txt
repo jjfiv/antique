@@ -10,4 +10,6 @@ add_library(lemur
     src/SHA1.cpp
     src/Keyfile.cpp
     src/RVLCompress.cpp
+    src/BulkTree.cpp
+    src/File.cpp
     src/lemur-compat.cpp)
