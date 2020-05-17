@@ -17,3 +17,9 @@ target_link_libraries(write_bulktree lemur)
 
 add_executable(read_bulktree src/read_bulktree.cpp)
 target_link_libraries(read_bulktree lemur)
+
+add_executable(write_keyfile src/write_keyfile.cpp)
+target_link_libraries(write_keyfile lemur)
+
+add_executable(read_keyfile src/read_keyfile.cpp)
+target_link_libraries(read_keyfile lemur)

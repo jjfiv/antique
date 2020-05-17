@@ -1,15 +1,6 @@
 import subprocess
 import sys
 
-
-def allow_time(p):
-    try:
-        # give it 50 ms to wrap-up
-        p.communicate(timeout=0.050)
-        return True
-    except TimeoutExpired:
-        return False
-
 PUTS = []
 
 with open("../../../data/vocab.txt") as dictionary:
@@ -23,3 +14,5 @@ PUTS.append("close\n");
 p = subprocess.Popen(["./write_bulktree", "dict.bulktree"], stdout=subprocess.PIPE, stdin=subprocess.PIPE)
 p.communicate(input=''.join(PUTS).encode('UTF-8'));
 
+p = subprocess.Popen(["./write_keyfile", "dict.keyfile"], stdout=subprocess.PIPE, stdin=subprocess.PIPE)
+p.communicate(input=''.join(PUTS).encode('UTF-8'));
