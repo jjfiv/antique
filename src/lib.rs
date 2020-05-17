@@ -1,5 +1,6 @@
 pub mod galago;
 pub mod heap_collection;
+pub mod indri;
 pub mod io_helper;
 pub mod lang;
 pub mod movement;
@@ -25,6 +26,8 @@ pub enum Error {
     IO(io::Error),
     BadFileName(OsString),
     BadGalagoMagic(u64),
+    BadBulkTreeSize,
+    BadBulkTreeBlock(u32),
     BadManifest(serde_json::Error),
     InternalSizeErr,
     Utf8DecodeError(Utf8Error),
