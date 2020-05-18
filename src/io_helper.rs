@@ -1,7 +1,18 @@
 use crate::Error;
+use memmap::{Mmap, MmapOptions};
 use std::convert::TryInto;
 use std::fmt;
+use std::fs;
+use std::path::Path;
+use std::sync::Arc;
 use std::{cmp::Ordering, str};
+
+pub fn open_mmap_file(path: &Path) -> Result<Arc<Mmap>, Error> {
+    let file = fs::File::open(path)?;
+    let opts = MmapOptions::new();
+    let mmap: Mmap = unsafe { opts.map(&file)? };
+    Ok(Arc::new(mmap))
+}
 
 #[derive(Debug, Clone)]
 pub struct ValueEntry {
@@ -223,9 +234,6 @@ impl<'src> SliceInputStream<'src> {
         Ok(self.consume(n)?)
     }
 }
-
-use memmap::Mmap;
-use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct ArcInputStream {

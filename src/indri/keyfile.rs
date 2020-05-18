@@ -23,6 +23,14 @@ pub enum KFErr {
     General(Error),
     FileNotOk(u32),
 }
+impl From<KFErr> for Error {
+    fn from(e: KFErr) -> Error {
+        match e {
+            KFErr::General(e) => e,
+            _ => Error::KeyfileError(Box::new(e)),
+        }
+    }
+}
 impl From<Error> for KFErr {
     fn from(e: Error) -> KFErr {
         KFErr::General(e)

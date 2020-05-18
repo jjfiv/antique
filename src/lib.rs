@@ -31,10 +31,12 @@ pub enum Error {
     BadManifest(serde_json::Error),
     InternalSizeErr,
     Utf8DecodeError(Utf8Error),
+    BadDocId(isize),
     Context(String, Box<Error>),
     MissingGalagoReader(String),
     MissingField,
     QueryInit,
+    KeyfileError(Box<indri::keyfile::KFErr>),
 }
 
 impl Error {
