@@ -1,5 +1,6 @@
-use crate::galago::btree::ValueEntry;
-use crate::io_helper::{ArcInputStream, DataInputStream, InputStream, SliceInputStream};
+use crate::io_helper::{
+    ArcInputStream, DataInputStream, InputStream, SliceInputStream, ValueEntry,
+};
 use crate::scoring::{EvalNode, Explanation, Movement};
 use crate::{stats::CountStats, DocId, Error};
 use std::convert::TryInto;

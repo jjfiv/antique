@@ -1,4 +1,4 @@
-use crate::io_helper::{Bytes, DataInputStream, InputStream, SliceInputStream};
+use crate::io_helper::{Bytes, DataInputStream, InputStream, SliceInputStream, ValueEntry};
 use crate::{galago::postings::IndexPartType, DocId};
 use crate::{Error, HashMap};
 use memmap::{Mmap, MmapOptions};
@@ -332,22 +332,6 @@ impl TreeReader {
             }
         }
         Ok(None)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ValueEntry {
-    pub(crate) source: Arc<Mmap>,
-    pub(crate) start: usize,
-    pub(crate) end: usize,
-}
-
-impl ValueEntry {
-    pub fn len(&self) -> usize {
-        self.end - self.start
-    }
-    pub fn to_str(&self) -> Result<&str, Error> {
-        Ok(std::str::from_utf8(&self.source[self.start..self.end])?)
     }
 }
 

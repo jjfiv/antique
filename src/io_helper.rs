@@ -3,6 +3,25 @@ use std::convert::TryInto;
 use std::fmt;
 use std::{cmp::Ordering, str};
 
+#[derive(Debug, Clone)]
+pub struct ValueEntry {
+    pub(crate) source: Arc<Mmap>,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+}
+
+impl ValueEntry {
+    pub fn len(&self) -> usize {
+        self.end - self.start
+    }
+    pub fn as_slice(&self) -> &[u8] {
+        &self.source[self.start..self.end]
+    }
+    pub fn to_str(&self) -> Result<&str, Error> {
+        Ok(std::str::from_utf8(self.as_slice())?)
+    }
+}
+
 #[derive(Hash, Eq, PartialEq, Clone)]
 pub struct Bytes {
     pub data: Box<[u8]>,
@@ -55,14 +74,17 @@ pub trait InputStream {
 pub trait DataInputStream {
     fn read_vbyte(&mut self) -> Result<u64, Error>;
     fn read_signed_vbyte(&mut self) -> Result<i64, Error>;
+    fn read_lemur_vbyte(&mut self) -> Result<u64, Error>;
     fn read_u64(&mut self) -> Result<u64, Error>;
     fn read_u32(&mut self) -> Result<u32, Error>;
+    fn read_u16(&mut self) -> Result<u16, Error>;
 }
 
 impl<I> DataInputStream for I
 where
     I: InputStream,
 {
+    /// Indri & Galago's vbyte: highest-bit set means stop.
     fn read_vbyte(&mut self) -> Result<u64, Error> {
         let mut result: u64 = 0;
         let mut bit_p: u8 = 0;
@@ -72,6 +94,24 @@ where
 
             // if highest bit set we're done!
             if byte & 0x80 > 0 {
+                result |= (byte & 0x7f) << bit_p;
+                return Ok(result);
+            }
+            result |= byte << bit_p;
+            bit_p += 7;
+        }
+        Err(Error::InternalSizeErr)
+    }
+    /// Lemur's Keyfile vbyte: highest-bit set means continue.
+    fn read_lemur_vbyte(&mut self) -> Result<u64, Error> {
+        let mut result: u64 = 0;
+        let mut bit_p: u8 = 0;
+        while !self.eof() {
+            // read_byte:
+            let byte = self.get()? as u64;
+
+            // if highest bit NOT set we're done!
+            if byte & 0x80 == 0 {
                 result |= (byte & 0x7f) << bit_p;
                 return Ok(result);
             }
@@ -98,6 +138,10 @@ where
     fn read_u32(&mut self) -> Result<u32, Error> {
         let exact = self.advance(4)?;
         Ok(u32::from_be_bytes(exact.try_into().unwrap()))
+    }
+    fn read_u16(&mut self) -> Result<u16, Error> {
+        let exact = self.advance(2)?;
+        Ok(u16::from_be_bytes(exact.try_into().unwrap()))
     }
 }
 
