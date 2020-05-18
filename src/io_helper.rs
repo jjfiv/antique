@@ -14,11 +14,18 @@ impl ValueEntry {
     pub fn len(&self) -> usize {
         self.end - self.start
     }
-    pub fn as_slice(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &[u8] {
         &self.source[self.start..self.end]
     }
     pub fn to_str(&self) -> Result<&str, Error> {
-        Ok(std::str::from_utf8(self.as_slice())?)
+        Ok(std::str::from_utf8(self.as_bytes())?)
+    }
+    pub fn as_le_u64(&self) -> Result<u64, Error> {
+        if self.len() == 8 {
+            Ok(u64::from_le_bytes(self.as_bytes().try_into().unwrap()))
+        } else {
+            Err(Error::InternalSizeErr)
+        }
     }
 }
 
@@ -105,18 +112,16 @@ where
     /// Lemur's Keyfile vbyte: highest-bit set means continue.
     fn read_lemur_vbyte(&mut self) -> Result<u64, Error> {
         let mut result: u64 = 0;
-        let mut bit_p: u8 = 0;
         while !self.eof() {
             // read_byte:
             let byte = self.get()? as u64;
 
+            result |= byte & 0x7f;
             // if highest bit NOT set we're done!
             if byte & 0x80 == 0 {
-                result |= (byte & 0x7f) << bit_p;
                 return Ok(result);
             }
-            result |= byte << bit_p;
-            bit_p += 7;
+            result <<= 7;
         }
         Err(Error::InternalSizeErr)
     }
@@ -188,6 +193,13 @@ impl<'src> InputStream for SliceInputStream<'src> {
 impl<'src> SliceInputStream<'src> {
     pub fn new(data: &'src [u8]) -> Self {
         Self { data, position: 0 }
+    }
+    pub fn peek(&self) -> Option<u8> {
+        if self.position < self.data.len() {
+            Some(self.data[self.position])
+        } else {
+            None
+        }
     }
     pub fn seek(&mut self, position: usize) -> Result<(), Error> {
         self.position = position;

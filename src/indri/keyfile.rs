@@ -7,13 +7,12 @@
 //! /*                                                               */
 //! ```
 use crate::{
-    io_helper::{DataInputStream, InputStream, SliceInputStream, ValueEntry},
+    io_helper::{Bytes, DataInputStream, InputStream, SliceInputStream, ValueEntry},
     Error,
 };
 use memmap::{Mmap, MmapOptions};
 use std::fs;
 use std::io;
-use std::str;
 use std::{cmp::Ordering, convert::TryInto, path::Path, sync::Arc};
 
 #[derive(Debug)]
@@ -142,18 +141,24 @@ impl Keyfile {
         })
     }
 
+    pub fn lookup_int(&self, key: isize) -> Result<Option<ValueEntry>, KFErr> {
+        let key = keyfile_encode_int(key);
+        self.lookup(&key)
+    }
+
     // get_ptr
     pub fn lookup(&self, key: &[u8]) -> Result<Option<ValueEntry>, KFErr> {
         // kf7_get_ptr .. etc.
         if key.len() > MAX_KEY_LENGTH {
             return Err(KFErr::KeyTooLong);
         }
-        const LEVEL_BEFORE_LEAVES: u32 = 1;
-        if let Some(b) = self.search_index(0, LEVEL_BEFORE_LEAVES, key)? {
+        if let Some(b) = self.search_index(INDEX_USED_BLOCKS, LEVEL_BEFORE_LEAVES, key)? {
             // Search the leaf we've been pointed to:
             let page = self.read_page(b)?;
             match page.search(key)? {
-                BlockSearchResult::NotFound(_) => return Ok(None),
+                BlockSearchResult::NotFound(ix) => {
+                    return Ok(None);
+                }
                 BlockSearchResult::Found(ix) => {
                     if ix >= page.keys_in_block {
                         if page.next.is_null() {
@@ -179,6 +184,9 @@ impl Keyfile {
     }
 
     fn read_record(&self, r: Record) -> Result<ValueEntry, KFErr> {
+        if r.segment as usize > self.segments.len() {
+            panic!("bad record? {:?}", r);
+        }
         self.read_address(
             SegmentAndBlock {
                 segment: r.segment,
@@ -198,6 +206,9 @@ impl Keyfile {
         if addr.is_null() {
             // Debug so I can get a backtrace.
             panic!("read_page of null!");
+        }
+        if addr.segment as usize > self.segments.len() {
+            panic!("bad addr? {:?} offset {:?} len {:?}", addr, offset, len);
         }
         let file = &self.segments[addr.segment as usize];
         let start = offset + ((addr.block << BLOCK_SHIFT) as usize);
@@ -232,6 +243,7 @@ impl Keyfile {
         debug_assert!(remaining % 2 == 0);
 
         let keys = &file[(offset + here)..(offset + BLOCK_LC)];
+        debug_assert_eq!(keys.len(), 2 * KEY_PTRS_PER_BLOCK);
 
         Ok(IndexBlock {
             addr,
@@ -247,10 +259,10 @@ impl Keyfile {
         })
     }
 
-    pub fn search_index(
+    fn search_index(
         &self,
-        depth: usize,
-        stop_level: u32,
+        kind: usize,
+        stop_level: usize,
         key: &[u8],
     ) -> Result<Option<SegmentAndBlock>, KFErr> {
         // search_index searches index blocks down to stop_lvl and returns
@@ -259,11 +271,17 @@ impl Keyfile {
         //   each block searched unless it is in the rightmost block at
         //   this level.  If a key is larger than any in this level, then
         //   the last_pntr pointer is the returned.
-        let mut child = self.first_at_level[self.primary_levels[depth] as usize][depth];
+        let start_level = self.primary_levels[kind] as usize;
+        let mut child = self.first_at_level[start_level][kind];
+
+        // Since this routine doesn't handle leaves;
+        if stop_level > start_level {
+            return Ok(Some(child));
+        }
 
         loop {
             let page = self.read_page(child)?;
-            let done = (page.level as u32) <= stop_level;
+            let done = (page.level as usize) <= stop_level;
 
             let index = match page.search(key)? {
                 BlockSearchResult::NotFound(ix) => ix,
@@ -276,7 +294,7 @@ impl Keyfile {
             } else {
                 // larger than any key:
                 if page.next.is_null() {
-                    child = self.last_ptr[page.level as usize][depth as usize];
+                    child = self.last_ptr[page.level as usize][kind as usize];
                 // only stop if done.
                 } else {
                     return Ok(None);
@@ -295,6 +313,35 @@ impl Keyfile {
             Ok(Some(child))
         }
     }
+
+    fn count_entries(&self) -> Result<usize, KFErr> {
+        let mut count = 0;
+        let mut segment = self.first_at_level[LEVEL_OF_LEAVES][INDEX_USED_BLOCKS];
+
+        while !segment.is_null() {
+            let page = self.read_page(segment)?;
+            count += page.keys_in_block as usize;
+            segment = page.next;
+        }
+
+        Ok(count)
+    }
+
+    fn collect_keys(&self) -> Result<Vec<Bytes>, KFErr> {
+        let mut segment = self.first_at_level[LEVEL_OF_LEAVES][INDEX_USED_BLOCKS];
+
+        let mut output = Vec::new();
+        while !segment.is_null() {
+            let page = self.read_page(segment)?;
+            output.reserve(page.keys_in_block as usize);
+            for i in 0..page.keys_in_block {
+                output.push(Bytes::from_slice(page.get_key(i)?));
+            }
+            segment = page.next;
+        }
+
+        Ok(output)
+    }
 }
 
 struct IndexBlock<'r> {
@@ -311,6 +358,7 @@ struct IndexBlock<'r> {
     keys: &'r [u8],
 }
 
+#[derive(Debug)]
 pub struct Record {
     segment: u16,
     block: usize,
@@ -324,10 +372,9 @@ enum BlockSearchResult {
 }
 impl<'r> IndexBlock<'r> {
     fn get_prefix(&self) -> Result<&'r [u8], KFErr> {
-        // TODO:
         // start = b->keys + keyspace_lc - prefix_lc
         // length = prefix_lc
-        // I think this is basically just the last (prefix_lc) bytes in the block.
+        // This is basically just the last (prefix_lc) bytes in the block.
         let prefix_lc = self.prefix_lc as usize;
         let end = self.keys.len();
         let start = end - prefix_lc;
@@ -367,10 +414,14 @@ impl<'r> IndexBlock<'r> {
         // skip the key:
         let _ = stream.advance(key_length)?;
         let value_length = stream.read_lemur_vbyte()? as usize;
-        if value_length > (max_inline_record as usize) {
-            let esc = stream.read_u64()? as usize;
+        if value_length > max_inline_record as usize {
+            let esc = stream.read_lemur_vbyte()? as usize;
             let sc = (esc >> 1) * RECORD_ALLOCATION_UNIT;
-            let segment = if esc & 1 > 0 { stream.read_u16()? } else { 0 };
+            let segment = if esc & 1 > 0 {
+                stream.read_lemur_vbyte()? as u16
+            } else {
+                0
+            };
             Ok(Record {
                 length: value_length,
                 block: 0,
@@ -378,9 +429,6 @@ impl<'r> IndexBlock<'r> {
                 segment,
             })
         } else {
-            // TODO; maybe pass buffer in?
-            // let mut out = Vec::with_capacity(value_length);
-            // out.extend(stream.consume(value_length)?);
             Ok(Record {
                 length: value_length,
                 block: self.addr.block as usize,
@@ -447,12 +495,22 @@ impl<'r> IndexBlock<'r> {
 }
 
 const BLOCK_LC: usize = 4096;
+/// #define leveln_lc (sizeof(UINT16)+sizeof(UINT64))
+const LEVELN_LC: usize = std::mem::size_of::<u16>() + std::mem::size_of::<u64>();
+/// ix_block_header_lc (2*sizeof(UINT16)+ 4 +2*leveln_lc)
+const INDEX_BLOCK_HEADER_LENGTH: usize = (2 * std::mem::size_of::<u16>() + 4 + 2 * LEVELN_LC);
+// key_ptrs_per_block = (block_lc - ix_block_header_lc) / sizeof(UINT16)
+const KEY_PTRS_PER_BLOCK: usize =
+    (BLOCK_LC - INDEX_BLOCK_HEADER_LENGTH) / std::mem::size_of::<u16>();
 const BLOCK_SHIFT: usize = 12;
 const MAX_KEY_LENGTH: usize = 512;
 const MAX_INDEX: usize = 3;
 const MAX_LEVEL: usize = 32;
 const MAX_SEGMENT: usize = 127;
 const RECORD_ALLOCATION_UNIT: usize = 8;
+const LEVEL_BEFORE_LEAVES: usize = 1;
+const LEVEL_OF_LEAVES: usize = 0;
+const INDEX_USED_BLOCKS: usize = 0;
 
 /// leveln_pntrs point to index blocks and are the pointers stored  
 ///   in index blocks above level0.  They are always compressed    
@@ -496,6 +554,38 @@ impl SegmentAndBlock {
     }
 }
 
+// To use the keyfile library, indri had to make integers into cstrings.
+// Which meant spreading across more than 4 bytes to ensure they're all non-zero.
+// Keyfile::_createKey did this; we can skip the null-terminator.
+fn keyfile_encode_int(number: isize) -> [u8; 6] {
+    let mut output: [u8; 6] = [0; 6];
+    fn buffer_shift(num: isize, digit: usize) -> isize {
+        num >> ((5 - digit) * 6)
+    }
+    fn buffer_digit(num: isize, digit: usize) -> u8 {
+        let shift_or = buffer_shift(num, digit) | 1 << 6;
+        let masked = shift_or & !(1 << 7);
+        masked as u8
+    }
+    output[5] = buffer_digit(number, 5);
+    output[4] = buffer_digit(number, 4);
+    output[3] = buffer_digit(number, 3);
+    output[2] = buffer_digit(number, 2);
+    output[1] = buffer_digit(number, 1);
+    output[0] = buffer_digit(number, 0);
+
+    output
+}
+
+fn keyfile_decode_int(bytes: [u8; 6]) -> isize {
+    (((bytes[5] & 0x3f) as isize) << 6 * 0)
+        | (((bytes[4] & 0x3f) as isize) << 6 * 1)
+        | (((bytes[3] & 0x3f) as isize) << 6 * 2)
+        | (((bytes[2] & 0x3f) as isize) << 6 * 3)
+        | (((bytes[1] & 0x3f) as isize) << 6 * 4)
+        | (((bytes[0] & 0x3f) as isize) << 6 * 5)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,13 +594,42 @@ mod tests {
     use std::str;
 
     #[test]
+    fn test_small_keyfile_ints() {
+        for i in 0..10 {
+            let encoded = keyfile_encode_int(i);
+            // the encoding is weird: the 7th bit flagged makes all zeros a 0x40; which is @.
+            assert_eq!('@' as u8, encoded[0]);
+            assert_eq!('@' as u8, encoded[1]);
+            assert_eq!('@' as u8, encoded[2]);
+            assert_eq!('@' as u8, encoded[3]);
+            assert_eq!('@' as u8, encoded[4]);
+            assert_eq!('@' as u8 + (i as u8), encoded[5]);
+        }
+    }
+    #[test]
+    fn test_keyfile_ints() {
+        for i in &[
+            0xf_isize, 0xef, 0xeef, 0xbeef, 0xdbeef, 0xadbeef, 0xeadbeef, 0xdeadbeef,
+        ] {
+            let encoded = keyfile_encode_int(*i);
+            let decoded = keyfile_decode_int(encoded);
+            assert_eq!(decoded, *i);
+        }
+
+        // Comparison holds under this encoding:
+        let enc_big = keyfile_encode_int(171717);
+        let enc_sm = keyfile_encode_int(171313);
+        assert!(enc_big > enc_sm);
+    }
+
+    #[test]
     fn test_open_keyfile() {
         let kf = Keyfile::open(Path::new("data/vocab.keyfile")).unwrap();
         assert_eq!(kf.version, 7);
         let record = kf.lookup("the".as_bytes()).unwrap().unwrap();
         // Value should be "3" which has size 1.
         assert_eq!(record.len(), 1);
-        assert_eq!(record.as_slice(), "3".as_bytes());
+        assert_eq!(record.as_bytes(), "3".as_bytes());
     }
 
     #[test]
@@ -518,7 +637,7 @@ mod tests {
         let dictionary = Keyfile::open(Path::new("data/vocab.keyfile")).unwrap();
         let lookup = |key: &str| {
             let val = dictionary.lookup(key.as_bytes()).unwrap().unwrap();
-            let str_val = str::from_utf8(val.as_slice()).unwrap();
+            let str_val = str::from_utf8(val.as_bytes()).unwrap();
             let num_val = str_val.parse::<usize>().unwrap();
 
             // because we wrote the length from python, we count chars here, not bytes.
@@ -531,6 +650,27 @@ mod tests {
         for line in io::BufReader::new(f).lines() {
             lookup(line.unwrap().trim());
         }
+    }
+
+    #[test]
+    fn test_in_collection() {
+        let collection_lookup =
+            Keyfile::open(Path::new("data/index.indri/collection/lookup")).unwrap();
+        assert_eq!(collection_lookup.version, 7);
+
+        let total_keys = collection_lookup.count_entries().unwrap();
+        println!("collection/lookup has {} keys", total_keys);
+
+        let keys = collection_lookup.collect_keys().unwrap();
+        println!("keyset: {:?}", keys);
+
+        // Indri doesn't use DOCID zero.
+        assert!(collection_lookup.lookup_int(0).unwrap().is_none());
+
+        let value = collection_lookup.lookup_int(1).unwrap().unwrap();
+        assert_eq!(value.as_le_u64().unwrap(), 0);
+        let value = collection_lookup.lookup_int(2).unwrap().unwrap();
+        assert_eq!(value.as_le_u64().unwrap(), 6257);
     }
 
     #[test]

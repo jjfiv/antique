@@ -32,6 +32,28 @@ int main(int argc, char *argv[])
             break;
         }
         // startswith(x) == (rfind(x, 0) == 0)
+        // encodes integers in strings with no null bytes.
+        if (line.rfind("get-int", 0) == 0)
+        {
+            assert(line[7] == ' ');
+            int key = std::stoi(line.substr(8));
+
+            int size = btree.getSize(key);
+            if (size == -1)
+            {
+                cout << "MISS\n";
+                continue;
+            }
+            cout << "FOUND len=" << size << "\n";
+            assert(size >= 0);
+            char *value = (char *)malloc(size);
+            int actualSize = 0;
+            if (btree.get(key, value, actualSize, size))
+            {
+                cout << "FOUND " << value << "\n";
+            }
+        }
+        // startswith(x) == (rfind(x, 0) == 0)
         else if (line.rfind("get", 0) == 0)
         {
             assert(line[3] == ' ');
