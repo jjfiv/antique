@@ -8,7 +8,6 @@ use antique::galago::index::Index;
 use antique::galago::tokenizer::tokenize_to_terms;
 use antique::heap_collection::*;
 use antique::lang::*;
-use antique::{scoring::Movement, DocId};
 use io::Write;
 
 fn main() -> Result<(), Error> {

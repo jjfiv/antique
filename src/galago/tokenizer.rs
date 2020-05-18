@@ -707,6 +707,7 @@ pub fn tokenize_to_terms(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn tokenize_tags(text: &str, tags: &[&str]) -> Document {
         let mut tokenizer = State::new(text);
@@ -755,51 +756,12 @@ mod tests {
         assert_eq!(expected, doc);
     }
 
-    use std::process::{Command, Output};
-
-    fn execute_jar_version(contents: &str, tags: &[&str]) -> Document {
-        let mut cmd = Command::new("java");
-        let cmd = cmd
-            .arg("-jar")
-            .arg("tokenizers/galago/target/TagTokenizer-1.0.jar")
-            .arg("--text")
-            .arg(contents);
-        for tag in tags {
-            cmd.arg("--tag").arg(tag);
-        }
-        let output: Output = cmd.output().unwrap();
-        serde_json::from_slice(output.stdout.as_slice()).unwrap()
-    }
-
-    use std::fs;
     #[test]
-    fn test_txt_file() {
-        let data = fs::read_to_string("data/inputs/README.txt").unwrap();
-        let jt = execute_jar_version(&data, &[]);
-        let rt = tokenize(&data);
-        assert_eq!(jt, rt);
-    }
-
-    #[test]
-    fn test_xml_snippet() {
-        let data = r#"
-        <dependency>
-            <groupId>junit</groupId>
-            <artifactId>junit</artifactId>
-            <version>4.12</version>
-            <scope>test</scope>
-        </dependency>
-        "#;
-        let jt = execute_jar_version(&data, &["dependency"]);
-        let rt = tokenize_tags(&data, &["dependency"]);
-        assert_eq!(jt, rt);
-    }
-
-    #[test]
-    fn test_pom_file() {
-        let data = fs::read_to_string("tokenizers/galago/pom.xml").unwrap();
-        let jt = execute_jar_version(&data, &["dependency"]);
-        let rt = tokenize_tags(&data, &["dependency"]);
+    fn test_precomputed_pom_xml() {
+        let data = fs::read_to_string("data/pom_xml_dep.json").unwrap();
+        let jt: Document = serde_json::from_str(data.as_str()).unwrap();
+        let tags = &["dependency"];
+        let rt = tokenize_tags(jt.text.as_str(), tags);
         assert_eq!(jt, rt);
     }
 }

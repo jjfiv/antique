@@ -1,6 +1,5 @@
 use crate::io_helper::*;
 use crate::Error;
-use crate::HashMap;
 use memmap::{Mmap, MmapOptions};
 use std::path::Path;
 use std::str;
@@ -84,7 +83,7 @@ impl BulkTreeReader {
     pub fn find_value(&self, key: &[u8]) -> Result<Option<Bytes>, Error> {
         let mut next_id = self.root_id();
         loop {
-            let block = BulkTreeBlock(next_id, self.fetch(next_id)?);
+            let block = BulkTreeBlock(self.fetch(next_id)?);
             if block.is_leaf() {
                 break;
             }
@@ -100,7 +99,7 @@ impl BulkTreeReader {
                     .map_err(|_| Error::BadBulkTreeBlock(next_id.0))?,
             ));
         }
-        let block = BulkTreeBlock(next_id, self.fetch(next_id)?);
+        let block = BulkTreeBlock(self.fetch(next_id)?);
 
         if let Some(index) = block.find_exact(key) {
             Ok(Some(Bytes::from_slice(block.value(index))))
@@ -113,20 +112,16 @@ impl BulkTreeReader {
 /// This struct is transient.
 /// We point it at a memory address to have OOP-style accessors.
 /// Unlike the indri version, we don't keep it around.
-struct BulkTreeBlock<'b>(BlockId, &'b [u8]);
+struct BulkTreeBlock<'b>(&'b [u8]);
 
 impl<'b> BulkTreeBlock<'b> {
-    /// Get the block-id back out.
-    fn id(&self) -> BlockId {
-        return self.0;
-    }
     /// Indri is primarily run on little-endian machines:
     /// Often the first word of the block is cast to a UINT16.
     /// 00000000: 0180 616c 7068 616f 6d65 6761 0000 0000  ..alphaomega....
     #[inline]
     fn nth_le_u16(&self, index: u32) -> u16 {
         let byte_offset = (index * 2) as usize;
-        ((self.1[byte_offset + 1] as u16) << 8) | (self.1[byte_offset] as u16)
+        ((self.0[byte_offset + 1] as u16) << 8) | (self.0[byte_offset] as u16)
     }
     fn is_leaf(&self) -> bool {
         return (self.nth_le_u16(0) & 0x8000) != 0;
@@ -168,12 +163,12 @@ impl<'b> BulkTreeBlock<'b> {
 
     fn key(&self, index: u16) -> &'b [u8] {
         let (start, end) = self.key_bounds(index);
-        return &self.1[start..end];
+        return &self.0[start..end];
     }
 
     fn value(&self, index: u16) -> &'b [u8] {
         let (start, end) = self.value_bounds(index);
-        return &self.1[start..end];
+        return &self.0[start..end];
     }
 
     fn find_exact(&self, key: &[u8]) -> Option<u16> {
@@ -235,6 +230,7 @@ struct DiskTermData {
     field_stats: Vec<TermFieldStats>,
 }
 
+#[cfg(test)]
 impl DiskTermData {
     fn from_stream<I>(input: &mut I, num_fields: usize) -> Result<DiskTermData, Error>
     where

@@ -6,10 +6,7 @@
 //! /*   2006, 2007 by Howard Turtle                                 */
 //! /*                                                               */
 //! ```
-use crate::{
-    io_helper::{Bytes, DataInputStream, InputStream, SliceInputStream, ValueEntry},
-    Error,
-};
+use crate::{io_helper::*, Error};
 use memmap::{Mmap, MmapOptions};
 use std::fs;
 use std::io;
@@ -51,8 +48,6 @@ pub struct Keyfile {
     max_inline_record: u32,
 }
 
-struct DataSlice(usize, usize);
-
 impl Keyfile {
     // open_key, get_kf_version, kf7_open_key, read_fib!
     pub fn open(path: &Path) -> Result<Keyfile, KFErr> {
@@ -77,7 +72,7 @@ impl Keyfile {
 
         let mut segments = Vec::new();
         segments.push(mmap.clone());
-        for i in 1..num_segments {
+        for _i in 1..num_segments {
             panic!("TODO: implement multiple segment files!")
         }
 
@@ -156,7 +151,7 @@ impl Keyfile {
             // Search the leaf we've been pointed to:
             let page = self.read_page(b)?;
             match page.search(key)? {
-                BlockSearchResult::NotFound(ix) => {
+                BlockSearchResult::NotFound(_) => {
                     return Ok(None);
                 }
                 BlockSearchResult::Found(ix) => {
@@ -231,13 +226,13 @@ impl Keyfile {
 
         let mut page = SliceInputStream::new(&file[offset..offset + BLOCK_LC]);
         let keys_in_block = page.read_u16()?;
-        let chars_in_use = page.read_u16()?;
-        let index_type = page.get()?;
+        let _chars_in_use = page.read_u16()?;
+        let _index_type = page.get()?;
         let prefix_lc = page.get()?;
         let _unused = page.get()?;
         let level = page.get()?;
         let next = SegmentAndBlock::from_stream(&mut page)?;
-        let prev = SegmentAndBlock::from_stream(&mut page)?;
+        let _prev = SegmentAndBlock::from_stream(&mut page)?;
         let here = page.tell();
         let remaining = BLOCK_LC - here;
         debug_assert!(remaining % 2 == 0);
@@ -249,12 +244,9 @@ impl Keyfile {
             addr,
             keys_offset: here,
             keys_in_block,
-            chars_in_use,
-            index_type,
             prefix_lc,
             level,
             next,
-            prev,
             keys,
         })
     }
@@ -314,7 +306,7 @@ impl Keyfile {
         }
     }
 
-    fn count_entries(&self) -> Result<usize, KFErr> {
+    pub fn count_entries(&self) -> Result<usize, KFErr> {
         let mut count = 0;
         let mut segment = self.first_at_level[LEVEL_OF_LEAVES][INDEX_USED_BLOCKS];
 
@@ -327,6 +319,7 @@ impl Keyfile {
         Ok(count)
     }
 
+    #[cfg(test)]
     fn collect_keys(&self) -> Result<Vec<Bytes>, KFErr> {
         let mut segment = self.first_at_level[LEVEL_OF_LEAVES][INDEX_USED_BLOCKS];
 
@@ -344,16 +337,17 @@ impl Keyfile {
     }
 }
 
+#[allow(dead_code)]
 struct IndexBlock<'r> {
     addr: SegmentAndBlock,
     keys_offset: usize,
     keys_in_block: u16,
-    chars_in_use: u16,
-    index_type: u8,
+    //chars_in_use: u16,
+    //index_type: u8,
     prefix_lc: u8,
     level: u8,
     next: SegmentAndBlock,
-    prev: SegmentAndBlock,
+    //prev: SegmentAndBlock,
     // stored as a u16* rather unsafely in original code.
     keys: &'r [u8],
 }
@@ -509,6 +503,7 @@ const MAX_LEVEL: usize = 32;
 const MAX_SEGMENT: usize = 127;
 const RECORD_ALLOCATION_UNIT: usize = 8;
 const LEVEL_BEFORE_LEAVES: usize = 1;
+#[allow(dead_code)]
 const LEVEL_OF_LEAVES: usize = 0;
 const INDEX_USED_BLOCKS: usize = 0;
 
@@ -577,6 +572,7 @@ fn keyfile_encode_int(number: isize) -> [u8; 6] {
     output
 }
 
+#[allow(dead_code)]
 fn keyfile_decode_int(bytes: [u8; 6]) -> isize {
     (((bytes[5] & 0x3f) as isize) << 6 * 0)
         | (((bytes[4] & 0x3f) as isize) << 6 * 1)
