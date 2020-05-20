@@ -36,6 +36,8 @@ pub enum Error {
     MissingGalagoReader(String),
     MissingField,
     QueryInit,
+    BadParameters,
+    XML(roxmltree::Error),
     KeyfileError(Box<indri::keyfile::KFErr>),
 }
 
@@ -51,6 +53,11 @@ impl Error {
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Error {
         Error::IO(err)
+    }
+}
+impl From<roxmltree::Error> for Error {
+    fn from(err: roxmltree::Error) -> Error {
+        Error::XML(err)
     }
 }
 
