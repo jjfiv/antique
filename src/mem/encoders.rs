@@ -4,6 +4,8 @@ use std::{
     marker::PhantomData,
 };
 
+use lz4_flex::{compress_prepend_size, decompress_size_prepended};
+
 trait Encoder<V, W>
 where
     W: io::Write,
@@ -44,7 +46,6 @@ where
 
     Ok(())
 }
-
 struct GalagoU32VByte;
 impl<W> Encoder<u32, W> for GalagoU32VByte
 where
@@ -55,13 +56,38 @@ where
     }
 }
 
-struct UTF8Encoder;
-impl<V, W> Encoder<V, W> for UTF8Encoder
+#[derive(Default)]
+struct LZ4StringEncoder {
+    buffer: Vec<u8>,
+}
+impl<S, W> Encoder<S, W> for LZ4StringEncoder
 where
-    V: AsRef<str>,
+    S: AsRef<str>,
     W: io::Write,
 {
-    fn write(&mut self, item: &V, out: &mut W) -> io::Result<()> {
+    fn write(&mut self, item: &S, out: &mut W) -> io::Result<()> {
+        // TODO: check!
+        let item: &str = item.as_ref();
+        // clear internal buffer; write compressed temporarily there:
+        self.buffer.clear();
+        lz4_flex::compress_into(item.as_bytes(), &mut self.buffer);
+
+        // vbyte length; blob.
+        let length = self.buffer.len() as u32;
+        write_vbyte(length, out)?;
+
+        let _ = out.write(&self.buffer)?;
+        Ok(())
+    }
+}
+
+struct UTF8Encoder;
+impl<S, W> Encoder<S, W> for UTF8Encoder
+where
+    S: AsRef<str>,
+    W: io::Write,
+{
+    fn write(&mut self, item: &S, out: &mut W) -> io::Result<()> {
         let item: &str = item.as_ref();
         let length = item.len() as u32;
         write_vbyte(length, out)?;

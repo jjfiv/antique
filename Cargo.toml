@@ -18,3 +18,4 @@ roxmltree = "0.11"
 once_cell = "1.3"
 stream-vbyte = "0.3"
 tempfile = "3"
+lz4_flex = { version = "0.7", default-features = false }
