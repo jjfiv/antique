@@ -244,6 +244,15 @@ pub struct ArcInputStream {
 }
 
 impl ArcInputStream {
+    pub fn from_mmap(source: Arc<Mmap>) -> Self {
+        let end = source.len();
+        Self {
+            source,
+            start: 0,
+            end,
+            offset: 0,
+        }
+    }
     pub fn new(source: Arc<Mmap>, start: usize, end: usize) -> Self {
         Self {
             source,
