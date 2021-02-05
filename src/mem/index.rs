@@ -181,6 +181,9 @@ impl Indexer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
+    use std::io::Read;
+
     #[test]
     fn test_indexer() {
         let mut indexer = Indexer::default();
@@ -196,6 +199,28 @@ mod tests {
         doc1.categorical(id_field, "doc1".into());
         doc1.textual(body_field, "hello yolo yolo yolo".into());
         indexer.insert_document(doc1.as_ref());
+
+        println!("vocab: {:?}", indexer.vocab)
+    }
+
+    use crate::galago::tokenizer::tokenize_to_terms;
+
+    #[test]
+    fn index_sample_data() {
+        let mut indexer = Indexer::default();
+        let id_field = indexer.field_to_id("id");
+        let body_field = indexer.field_to_id("body");
+
+        for i in 1..=5 {
+            let path = format!("data/inputs/ch{}.txt", i);
+            let mut body = String::new();
+            let mut fp = File::open(path).unwrap();
+            let _ = File::read_to_string(&mut fp, &mut body).unwrap();
+            let mut doc = DocFields::default();
+            doc.categorical(id_field, format!("ch{}", i));
+            doc.textual(body_field, body.to_lowercase());
+            indexer.insert_document(doc.as_ref())
+        }
 
         println!("vocab: {:?}", indexer.vocab)
     }

@@ -21,7 +21,7 @@ pub enum FieldType {
     /// Sparse boolean as well as other categorical.
     Categorical,
     /// Words are considered sparse features.
-    Textual(TextOptions),
+    Textual(TextOptions, TokenizerStyle),
     /// Bitmap (expect dense!)
     Boolean,
     /// One int for every document.
@@ -33,6 +33,11 @@ pub enum FieldType {
     /// A float for some documents; skippable.
     SparseFloat,
 }
+
+pub enum TokenizerStyle {
+    Whitespace,
+    Galago,
+}
 pub struct FieldMetadata {
     index: FieldId,
     kind: FieldType,
@@ -41,7 +46,7 @@ pub struct FieldMetadata {
 impl FieldMetadata {
     fn dense(&self) -> bool {
         match self.kind {
-            FieldType::Categorical | FieldType::Textual(_) => false,
+            FieldType::Categorical | FieldType::Textual(_, _) => false,
             FieldType::Boolean | FieldType::DenseInt | FieldType::DenseFloat => true,
             FieldType::SparseInt | FieldType::SparseFloat => false,
         }
