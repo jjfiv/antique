@@ -319,10 +319,7 @@ impl PositionsPostingsIter {
     }
     fn load_next_posting(&mut self) -> Result<(), Error> {
         if self.document_index >= self.postings.document_count {
-            // Free memory:
             self.positions_buffer.clear();
-            self.positions_buffer.shrink_to_fit();
-
             self.current_count = 0;
             self.current_document = DocId::no_more();
             return Ok(());
@@ -344,7 +341,6 @@ impl PositionsPostingsIter {
         self.current_count = self.counts.read_vbyte()? as u32;
 
         // prepare the array of positions:
-        self.positions_buffer.clear();
         self.positions_loaded = false;
 
         if self.current_positions_has_length() {

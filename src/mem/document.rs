@@ -1,4 +1,4 @@
-use crate::{DocId, HashMap};
+use crate::{galago::tokenizer::tokenize_to_terms, DocId, HashMap};
 use std::collections::BTreeMap;
 
 #[repr(transparent)]
@@ -10,7 +10,7 @@ pub struct TermId(pub u32);
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FieldId(pub u16);
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone)]
 pub enum TextOptions {
     Docs,
     Counts,
@@ -37,13 +37,30 @@ pub enum FieldType {
 pub enum TokenizerStyle {
     Whitespace,
     Galago,
+    Unicode,
+}
+impl TokenizerStyle {
+    pub fn process(&self, input: &str) -> Vec<String> {
+        match self {
+            TokenizerStyle::Whitespace => input
+                .to_lowercase()
+                .split_whitespace()
+                .map(|str| str.to_owned())
+                .collect(),
+            TokenizerStyle::Galago => tokenize_to_terms(input),
+            TokenizerStyle::Unicode => todo!(),
+        }
+    }
 }
 pub struct FieldMetadata {
-    index: FieldId,
-    kind: FieldType,
-    stored: bool,
+    pub kind: FieldType,
+    pub stored: bool,
 }
 impl FieldMetadata {
+    pub fn new(kind: FieldType, stored: bool) -> Self {
+        Self { kind, stored }
+    }
+
     fn dense(&self) -> bool {
         match self.kind {
             FieldType::Categorical | FieldType::Textual(_, _) => false,
