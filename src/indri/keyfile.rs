@@ -500,7 +500,7 @@ const BLOCK_LC: usize = 4096;
 /// #define leveln_lc (sizeof(UINT16)+sizeof(UINT64))
 const LEVELN_LC: usize = std::mem::size_of::<u16>() + std::mem::size_of::<u64>();
 /// ix_block_header_lc (2*sizeof(UINT16)+ 4 +2*leveln_lc)
-const INDEX_BLOCK_HEADER_LENGTH: usize = (2 * std::mem::size_of::<u16>() + 4 + 2 * LEVELN_LC);
+const INDEX_BLOCK_HEADER_LENGTH: usize = (2 * std::mem::size_of::<u16>()) + 4 + (2 * LEVELN_LC);
 // key_ptrs_per_block = (block_lc - ix_block_header_lc) / sizeof(UINT16)
 const KEY_PTRS_PER_BLOCK: usize =
     (BLOCK_LC - INDEX_BLOCK_HEADER_LENGTH) / std::mem::size_of::<u16>();

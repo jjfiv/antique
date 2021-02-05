@@ -102,7 +102,7 @@ impl Index {
 
     pub fn lookup_id_for_name(&mut self, name: &str) -> Result<Option<DocId>, Error> {
         if let Some(result) = self.names_reverse.find_str(name)? {
-            return Ok(Some(DocId(result.stream().read_u64()?)));
+            return Ok(Some(DocId(result.stream().read_u64()? as u32)));
         }
         Ok(None)
     }

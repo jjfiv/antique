@@ -32,7 +32,7 @@ struct MetadataPair {
 
 impl DocumentDecoder {
     fn new(buffer: Vec<u8>) -> Result<DocumentDecoder, Error> {
-        let mut buffer = DocumentBuffer(buffer);
+        let buffer = DocumentBuffer(buffer);
         let num_fields = buffer.read_word(buffer.len() - 4) as usize;
         let field_info_size = 2 * num_fields * size_of::<u32>();
         let metadata_start = buffer.len() - 4 - field_info_size;

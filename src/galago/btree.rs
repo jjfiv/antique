@@ -180,7 +180,7 @@ impl TreeReader {
             let mut block_iter = block.iterator(&self.mmap, &mut key_buffer)?;
             while let Some(entry) = block_iter.read_next(&mut key_buffer)? {
                 let mut reader = SliceInputStream::new(&source[entry.start..entry.end]);
-                let docid = DocId(reader.read_u64()?);
+                let docid = DocId(reader.read_u64()? as u32);
                 output.insert(str::from_utf8(&key_buffer)?.to_owned(), docid);
             }
         }

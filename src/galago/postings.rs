@@ -98,8 +98,8 @@ impl LengthsPostings {
         let avg_length = f64::from_bits(stream.read_u64()?);
         let max_length = stream.read_u64()?;
         let min_length = stream.read_u64()?;
-        let first_doc = DocId(stream.read_u64()?);
-        let last_doc = DocId(stream.read_u64()?);
+        let first_doc = DocId(stream.read_u64()? as u32);
+        let last_doc = DocId(stream.read_u64()? as u32);
         let values_offset = stream.tell();
 
         Ok(LengthsPostings {
@@ -261,7 +261,7 @@ impl PositionsPostings {
     pub fn docs(self) -> Result<DocsIter, Error> {
         let postings = self;
         let mut documents = postings.source.substream(postings.documents);
-        let start = documents.read_vbyte()?;
+        let start = documents.read_vbyte()? as u32;
         Ok(DocsIter {
             documents,
             postings,
@@ -273,7 +273,7 @@ impl PositionsPostings {
         let postings = self;
         let mut documents = postings.source.substream(postings.documents);
         let mut counts = postings.source.substream(postings.counts);
-        let start = documents.read_vbyte()?;
+        let start = documents.read_vbyte()? as u32;
         let current_count = counts.read_vbyte()? as u32;
         Ok(CountsIter {
             documents,
@@ -340,7 +340,7 @@ impl PositionsPostingsIter {
         }
 
         // Step forward:
-        self.current_document.0 += self.documents.read_vbyte()?;
+        self.current_document.0 += self.documents.read_vbyte()? as u32;
         self.current_count = self.counts.read_vbyte()? as u32;
 
         // prepare the array of positions:
@@ -463,7 +463,7 @@ impl EvalNode for CountsIter {
             }
 
             // Step forward:
-            self.current_document.0 += self.documents.read_vbyte()?;
+            self.current_document.0 += self.documents.read_vbyte()? as u32;
             self.current_count = self.counts.read_vbyte()? as u32;
         }
 
@@ -523,7 +523,7 @@ impl EvalNode for DocsIter {
             }
 
             // Step forward:
-            self.current_document.0 += self.documents.read_vbyte()?;
+            self.current_document.0 += self.documents.read_vbyte()? as u32;
         }
 
         Ok(self.current_document)

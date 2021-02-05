@@ -3,6 +3,7 @@ pub mod heap_collection;
 pub mod indri;
 pub mod io_helper;
 pub mod lang;
+pub mod mem;
 pub mod movement;
 pub mod scoring;
 pub mod stats;
@@ -67,19 +68,19 @@ impl From<Utf8Error> for Error {
     }
 }
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Hash)]
 #[repr(transparent)]
-pub struct DocId(u64);
+pub struct DocId(u32);
 
 impl DocId {
     pub fn is_done(&self) -> bool {
-        self.0 == std::u64::MAX
+        self.0 == std::u32::MAX
     }
     pub fn no_more() -> DocId {
-        DocId(std::u64::MAX)
+        DocId(std::u32::MAX)
     }
     pub fn to_be_bytes(&self) -> [u8; 8] {
-        self.0.to_be_bytes()
+        (self.0 as u64).to_be_bytes()
     }
     pub fn next(&self) -> DocId {
         return DocId(self.0 + 1);
