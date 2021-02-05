@@ -17,6 +17,7 @@ pub enum TextOptions {
     Positions,
 }
 
+#[derive(Debug, Clone)]
 pub enum FieldType {
     /// Sparse boolean as well as other categorical.
     Categorical,
@@ -34,6 +35,7 @@ pub enum FieldType {
     SparseFloat,
 }
 
+#[derive(Debug, Clone)]
 pub enum TokenizerStyle {
     Whitespace,
     Galago,
@@ -52,6 +54,8 @@ impl TokenizerStyle {
         }
     }
 }
+
+#[derive(Debug, Clone)]
 pub struct FieldMetadata {
     pub kind: FieldType,
     pub stored: bool,
@@ -61,7 +65,7 @@ impl FieldMetadata {
         Self { kind, stored }
     }
 
-    fn dense(&self) -> bool {
+    pub(crate) fn is_dense(&self) -> bool {
         match self.kind {
             FieldType::Categorical | FieldType::Textual(_, _) => false,
             FieldType::Boolean | FieldType::DenseInt | FieldType::DenseFloat => true,
@@ -71,12 +75,14 @@ impl FieldMetadata {
 }
 
 // TODO: make these Cows?
+#[derive(Clone)]
 pub enum FieldValue {
     Categorical(String),
     Textual(String),
     Integer(u32),
     Floating(f32),
 }
+#[derive(Clone)]
 pub struct DocField {
     pub field: FieldId,
     pub value: FieldValue,

@@ -77,7 +77,7 @@ pub struct Indexer {
     /// Additional integer-valued fields may end up here.
     dense_fields: BTreeMap<FieldId, DenseU32FieldBuilder>,
     // TODO: corpus-structure:
-    stored_fields: BTreeMap<u32, Vec<DocFields>>,
+    stored_fields: BTreeMap<DocId, Vec<DocField>>,
     /// Each field stores a 'length' for normalizing.
     lengths: BTreeMap<FieldId, DenseU32FieldBuilder>,
 }
@@ -193,11 +193,7 @@ impl Indexer {
                 for (index, token) in tokens.iter().enumerate() {
                     let token = token.as_ref();
                     let token = self.token_to_id(field, token);
-                    if let Some(pos) = positions.get_mut(&token) {
-                        pos.push(index as u32)
-                    } else {
-                        positions.insert(token, CompressedSortedIntSet::new(index as u32));
-                    }
+                    positions.entry(token).or_default().push(index as u32);
                 }
 
                 for (term_id, positions) in positions.into_iter() {
@@ -214,8 +210,13 @@ impl Indexer {
     pub fn insert_document(&mut self, document: &[DocField]) -> Result<DocId, ()> {
         let doc_id = self.next_docid();
 
+        let mut stored = Vec::new();
         for field in document {
-            let schema = self.schema.get(&field.field).ok_or(())?;
+            let schema = self.schema.get(&field.field).ok_or(())?.clone();
+            if schema.stored {
+                stored.push(field.clone())
+            }
+
             match &field.value {
                 FieldValue::Categorical(term) => {
                     self.insert_text_field(doc_id, field.field, &[term], TextOptions::Docs)
@@ -229,13 +230,32 @@ impl Indexer {
                     self.insert_text_field(doc_id, field.field, &tokens, *opts)
                 }
                 FieldValue::Integer(num) => {
-                    self.dense_fields
-                        .entry(field.field)
-                        .or_default()
-                        .insert(doc_id, *num);
+                    if schema.is_dense() {
+                        self.dense_fields
+                            .entry(field.field)
+                            .or_default()
+                            .insert(doc_id, *num);
+                    } else {
+                        todo!()
+                    }
                 }
-                FieldValue::Floating(_) => todo! {},
+                FieldValue::Floating(num) => {
+                    let bytes = num.to_le_bytes();
+                    let word = u32::from_le_bytes(bytes);
+                    if schema.is_dense() {
+                        self.dense_fields
+                            .entry(field.field)
+                            .or_default()
+                            .insert(doc_id, word);
+                    } else {
+                        todo!()
+                    }
+                }
             }
+        }
+
+        if stored.len() > 0 {
+            self.stored_fields.insert(doc_id, stored);
         }
 
         Ok(doc_id)
@@ -264,7 +284,7 @@ mod tests {
         let mut doc0 = DocFields::default();
         doc0.categorical(id_field, "doc0".into());
         doc0.textual(body_field, "hello world hello".into());
-        indexer.insert_document(doc0.as_ref());
+        let _ = indexer.insert_document(doc0.as_ref()).expect("Schema OK!");
 
         let mut doc1 = DocFields::default();
         doc1.categorical(id_field, "doc1".into());

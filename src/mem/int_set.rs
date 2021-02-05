@@ -6,12 +6,6 @@ pub struct CompressedSortedIntSet {
 }
 
 impl CompressedSortedIntSet {
-    pub fn new(first: u32) -> Self {
-        Self {
-            deltas: vec![first],
-            prev: first,
-        }
-    }
     pub fn len(&self) -> usize {
         self.deltas.len()
     }
@@ -74,8 +68,8 @@ mod tests {
         if monotonic.len() == 0 {
             return vec![];
         }
-        let mut out = CompressedSortedIntSet::new(monotonic[0]);
-        for x in monotonic.iter().skip(1).cloned() {
+        let mut out = CompressedSortedIntSet::default();
+        for x in monotonic.iter().cloned() {
             out.push(x);
         }
         out.into_deltas()
