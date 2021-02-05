@@ -8,7 +8,7 @@ use crate::{stats::CountStats, DocId};
 use std::collections::BTreeMap;
 
 #[derive(Default)]
-struct PostingListBuilder {
+pub(crate) struct PostingListBuilder {
     /// index-paired with counts.
     docs: CompressedSortedIntSet,
     /// index-paired with docs.
@@ -42,7 +42,7 @@ impl PostingListBuilder {
 }
 
 #[derive(Default)]
-struct DenseU32FieldBuilder {
+pub(crate) struct DenseU32FieldBuilder {
     total: u64,
     /// Every doc must have an entry for every T.
     blob: Vec<u32>,
@@ -68,18 +68,22 @@ impl DenseU32FieldBuilder {
 /// An in-memory index / indexer.
 #[derive(Default)]
 pub struct Indexer {
-    next_id: u32,
-    vocab: BTreeMap<FieldId, BTreeMap<String, TermId>>,
-    fields: BTreeMap<String, FieldId>,
-    schema: BTreeMap<FieldId, FieldMetadata>,
+    /// What document id will we assign next? Also max docs.
+    pub(crate) next_id: u32,
+    /// Each field has its own vocabulary.
+    pub(crate) vocab: BTreeMap<FieldId, BTreeMap<String, TermId>>,
+    /// Each field has a name.
+    pub(crate) fields: BTreeMap<String, FieldId>,
+    /// Each field has a schema.
+    pub(crate) schema: BTreeMap<FieldId, FieldMetadata>,
     /// Textual and categorical features end up here.
-    postings: BTreeMap<FieldId, BTreeMap<TermId, PostingListBuilder>>,
+    pub(crate) postings: BTreeMap<FieldId, BTreeMap<TermId, PostingListBuilder>>,
     /// Additional integer-valued fields may end up here.
-    dense_fields: BTreeMap<FieldId, DenseU32FieldBuilder>,
+    pub(crate) dense_fields: BTreeMap<FieldId, DenseU32FieldBuilder>,
     // TODO: corpus-structure:
-    stored_fields: BTreeMap<DocId, Vec<DocField>>,
+    pub(crate) stored_fields: BTreeMap<FieldId, BTreeMap<DocId, FieldValue>>,
     /// Each field stores a 'length' for normalizing.
-    lengths: BTreeMap<FieldId, DenseU32FieldBuilder>,
+    pub(crate) lengths: BTreeMap<FieldId, DenseU32FieldBuilder>,
 }
 
 impl Indexer {
@@ -255,7 +259,10 @@ impl Indexer {
         }
 
         if stored.len() > 0 {
-            self.stored_fields.insert(doc_id, stored);
+            for field in stored.into_iter() {
+                let column = self.stored_fields.entry(field.field).or_default();
+                column.insert(doc_id, field.value);
+            }
         }
 
         Ok(doc_id)
