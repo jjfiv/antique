@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub(crate) struct PostingListBuilder {
     /// index-paired with counts.
-    pub(crate) docs: CompressedSortedIntSet,
+    pub(crate) docs: Vec<u32>,
     /// index-paired with docs.
     pub(crate) counts: Vec<u32>,
     /// encoded & d-gapped positions buffers, only.

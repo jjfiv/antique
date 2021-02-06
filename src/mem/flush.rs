@@ -65,6 +65,8 @@ pub fn flush_segment(segment: u32, dir: &PathBuf, indexer: &mut Indexer) -> io::
     Ok(())
 }
 
+const INDEX_CHUNK_SIZE: usize = 128;
+
 pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Result<()> {
     for (field, contents) in &indexer.postings {
         let schema = indexer.schema.get(&field).unwrap().clone();
@@ -82,31 +84,29 @@ pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Res
                     match opts {
                         TextOptions::Docs => {
                             write_vbyte(0b1, w)?;
-                            let mut docs = Vec::with_capacity(128);
+                            let mut buffer = Vec::with_capacity(INDEX_CHUNK_SIZE);
                             let mut encoded = vec![0u8; 128 * 5];
-
-                            let mut skips = Vec::new();
-
-                            let mut last_doc = 0;
+                            let _doc_skips: Vec<u32> = val
+                                .docs
+                                .as_slice()
+                                .chunks(INDEX_CHUNK_SIZE)
+                                .map(|slice| slice[0])
+                                .collect();
+                            let mut doc_offsets = Vec::new();
                             let mut offset = 0;
-                            for doc in val.docs.iter() {
-                                docs.push(doc - last_doc);
-                                last_doc = doc;
-                                if docs.len() == 128 {
-                                    skips.push((docs[0], offset));
-                                    let byte_len =
-                                        stream_vbyte::encode::<Scalar>(&docs, &mut encoded);
-                                    offset += byte_len;
-                                    write_vbyte(byte_len as u32, w)?;
-                                    w.write_all(&encoded[..byte_len])?;
+                            for docs in val.docs.as_slice().chunks(INDEX_CHUNK_SIZE) {
+                                buffer.clear();
+                                let mut last_doc = docs[0];
+                                for doc in docs.iter() {
+                                    buffer.push(doc - last_doc);
                                 }
+                                doc_offsets.push(offset);
+                                let byte_len =
+                                    stream_vbyte::encode::<Scalar>(&buffer, &mut encoded);
+                                offset += byte_len;
+                                write_vbyte(byte_len as u32, w)?;
+                                w.write_all(&encoded[..byte_len])?;
                             }
-
-                            skips.push((docs[0], offset));
-                            let byte_len = stream_vbyte::encode::<Scalar>(&docs, &mut encoded);
-                            offset += byte_len;
-                            write_vbyte(byte_len as u32, w)?;
-                            w.write_all(&encoded[..byte_len])?;
                         }
                         TextOptions::Counts => write_vbyte(0b11, w)?,
                         TextOptions::Positions => write_vbyte(0b111, w)?,
