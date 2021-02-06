@@ -8,7 +8,7 @@ where
     fn write(&mut self, item: &V, out: &mut W) -> io::Result<()>;
 }
 
-pub(crate) fn write_vbyte<W>(i: u32, out: &mut W) -> io::Result<()>
+pub(crate) fn write_vbyte<W>(i: u32, out: &mut W) -> io::Result<usize>
 where
     W: io::Write,
 {
@@ -37,12 +37,11 @@ where
         buf.push(((i >> 28) | 0x80) as u8);
     }
 
-    let _ = out.write(&buf)?;
-
-    Ok(())
+    out.write_all(&buf)?;
+    Ok(buf.len())
 }
 
-pub(crate) fn write_vbyte_u64<W>(i: u64, out: &mut W) -> io::Result<()>
+pub(crate) fn write_vbyte_u64<W>(i: u64, out: &mut W) -> io::Result<usize>
 where
     W: io::Write,
 {
@@ -105,9 +104,9 @@ where
         buf.push(((i >> 56) | 0x80) as u8);
     }
 
-    let _ = out.write(&buf)?;
+    out.write_all(&buf)?;
 
-    Ok(())
+    Ok(buf.len())
 }
 pub(crate) struct GalagoU32VByte;
 impl<W> Encoder<u32, W> for GalagoU32VByte
@@ -115,7 +114,8 @@ where
     W: io::Write,
 {
     fn write(&mut self, item: &u32, out: &mut W) -> io::Result<()> {
-        write_vbyte(*item, out)
+        let _ = write_vbyte(*item, out)?;
+        Ok(())
     }
 }
 

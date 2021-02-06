@@ -4,9 +4,57 @@ use std::{
     path::PathBuf,
 };
 
+use crate::io_helper::Teller;
+
 use super::encoders::{write_vbyte, write_vbyte_u64};
 
 const PAGE_4K: usize = 4096;
+
+pub struct CountingFileWriter {
+    output: File,
+    buffer: Vec<u8>,
+    written: u64,
+}
+
+impl io::Write for CountingFileWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.buffer.len() > PAGE_4K {
+            self.flush_buffer()?;
+        }
+        self.buffer.extend(buf);
+        let amt = self.output.write(buf)?;
+        self.written += amt as u64;
+        Ok(amt)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flush_buffer()?;
+        self.output.flush()
+    }
+}
+
+impl CountingFileWriter {
+    pub fn put(&mut self, x: u8) {
+        self.buffer.push(x);
+    }
+    pub fn tell(&self) -> u64 {
+        self.written
+    }
+    fn flush_buffer(&mut self) -> io::Result<()> {
+        self.output.write_all(&mut self.buffer)?;
+        self.buffer.clear();
+        Ok(())
+    }
+    pub fn new(file: File) -> io::Result<Self> {
+        let mut output = file;
+        let written = output.tell()?;
+        Ok(Self {
+            output,
+            buffer: Vec::with_capacity(PAGE_4K),
+            written,
+        })
+    }
+}
 
 struct PagePacker {
     page_size: usize,
@@ -88,8 +136,8 @@ impl IdAndValueAddr {
 }
 
 pub(crate) struct KeyValueWriter {
-    keys_file: File,
-    vals_file: File,
+    keys_file: CountingFileWriter,
+    vals_file: CountingFileWriter,
     key_packer: PagePacker,
     page_item_count: u32,
     block_starts: Vec<IdAndValueAddr>,
@@ -115,8 +163,8 @@ impl KeyValueWriter {
     }
     fn new(keys_file: File, vals_file: File) -> io::Result<Self> {
         // Tag files with magic-numbers:
-        let mut keys_file = keys_file;
-        let mut vals_file = vals_file;
+        let mut keys_file = CountingFileWriter::new(keys_file)?;
+        let mut vals_file = CountingFileWriter::new(vals_file)?;
         keys_file.write_all(KEY_MAGIC)?;
         vals_file.write_all(VAL_MAGIC)?;
 
@@ -192,7 +240,7 @@ impl KeyValueWriter {
     }
 
     /// use this after 'begin_pair'.
-    pub(crate) fn value_writer(&mut self) -> &mut File {
+    pub(crate) fn value_writer(&mut self) -> &mut CountingFileWriter {
         &mut self.vals_file
     }
 
@@ -224,11 +272,11 @@ impl KeyValueWriter {
     }
 
     fn _val_tell(&mut self) -> io::Result<u64> {
-        self.vals_file.seek(SeekFrom::Current(0))
+        Ok(self.vals_file.tell())
     }
 
     fn _key_tell(&mut self) -> io::Result<u64> {
-        self.keys_file.seek(SeekFrom::Current(0))
+        Ok(self.keys_file.tell())
     }
 
     fn _flush_current_block(&mut self) -> io::Result<()> {

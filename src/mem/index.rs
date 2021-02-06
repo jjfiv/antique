@@ -1,5 +1,6 @@
 use super::{
     document::{DocField, FieldId, FieldMetadata, FieldValue, TermId, TextOptions},
+    int_set::ChunkedIntList,
     CompressedSortedIntSet,
 };
 use crate::mem::document::FieldType;
@@ -10,9 +11,9 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub(crate) struct PostingListBuilder {
     /// index-paired with counts.
-    pub(crate) docs: Vec<u32>,
+    pub(crate) docs: ChunkedIntList,
     /// index-paired with docs.
-    pub(crate) counts: Vec<u32>,
+    pub(crate) counts: ChunkedIntList,
     /// encoded & d-gapped positions buffers, only.
     pub(crate) positions: Vec<Vec<u8>>,
     /// Total # of counts across all documents.

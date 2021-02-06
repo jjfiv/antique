@@ -1,3 +1,35 @@
+use crate::mem::flush::INDEX_CHUNK_SIZE;
+
+pub struct ChunkedIntList {
+    pub(crate) buffers: Vec<Vec<u32>>,
+}
+
+impl Default for ChunkedIntList {
+    fn default() -> Self {
+        Self {
+            buffers: vec![Vec::with_capacity(INDEX_CHUNK_SIZE)],
+        }
+    }
+}
+
+impl ChunkedIntList {
+    fn append_chunk(&mut self) {
+        self.buffers.push(Vec::with_capacity(INDEX_CHUNK_SIZE));
+    }
+    pub fn push(&mut self, n: u32) {
+        let mut last = self.buffers.last_mut().unwrap();
+        if last.len() == INDEX_CHUNK_SIZE {
+            self.append_chunk();
+            last = self.buffers.last_mut().unwrap()
+        }
+        last.push(n)
+    }
+    pub fn len(&self) -> usize {
+        let count = (self.buffers.len() - 1) * INDEX_CHUNK_SIZE;
+        count + self.buffers.last().unwrap().len()
+    }
+}
+
 /// Compressed, Sorted-Int-Set
 #[derive(Default)]
 pub struct CompressedSortedIntSet {

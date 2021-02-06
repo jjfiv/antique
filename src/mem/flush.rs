@@ -8,8 +8,8 @@ use stream_vbyte::Scalar;
 use super::{
     document::{FieldId, FieldMetadata, FieldType, TextOptions},
     encoders::{write_vbyte, write_vbyte_u64, Encoder, LZ4StringEncoder},
-    index::Indexer,
-    key_val_files::KeyValueWriter,
+    index::{Indexer, PostingListBuilder},
+    key_val_files::{CountingFileWriter, KeyValueWriter},
 };
 
 // Let's deal with indexing.
@@ -65,7 +65,127 @@ pub fn flush_segment(segment: u32, dir: &PathBuf, indexer: &mut Indexer) -> io::
     Ok(())
 }
 
-const INDEX_CHUNK_SIZE: usize = 128;
+struct DocCountSkipKeyInfo {
+    has_counts: bool,
+    skips_addr: u64,
+}
+
+fn delta_gap(input: &[u32], output: &mut Vec<u32>) {
+    output.clear();
+    output.reserve(input.len());
+    let mut prev = input[0];
+    for it in input {
+        output.push(it - prev);
+        prev = *it;
+    }
+}
+struct SkipInfo {
+    id: u32,
+    doc_addr: u64,
+    pos_addr: u64,
+}
+impl SkipInfo {
+    fn create(
+        id: u32,
+        docs_writer: &mut CountingFileWriter,
+        pos_writer: &Option<&mut CountingFileWriter>,
+    ) -> Self {
+        let pos_addr = if let Some(pw) = pos_writer {
+            pw.tell()
+        } else {
+            0
+        };
+        let doc_addr = docs_writer.tell();
+        SkipInfo {
+            id,
+            doc_addr,
+            pos_addr,
+        }
+    }
+}
+
+struct PostingsWriter {
+    terms_writer: CountingFileWriter,
+    docs_writer: CountingFileWriter,
+    pos_writer: Option<CountingFileWriter>,
+}
+
+/// Returns skip-addr from within docs.
+fn write_docs_counts_skips(
+    postings: &PostingListBuilder,
+    docs_writer: &mut CountingFileWriter,
+    mut pos_writer: Option<&mut CountingFileWriter>,
+) -> io::Result<u64> {
+    let doc_frequency = postings.docs.len();
+    let has_counts = postings.counts.len() > 0;
+    let has_positions = postings.positions.len() > 0;
+    debug_assert_eq!(has_positions, pos_writer.is_some());
+
+    // buffers for encoding 128-chunks of ints:
+    let mut buffer = Vec::with_capacity(INDEX_CHUNK_SIZE);
+    let mut encoded_docs = [0u8; INDEX_CHUNK_SIZE * 5];
+    let mut encoded_counts = [0u8; INDEX_CHUNK_SIZE * 5];
+
+    let mut skips = Vec::new();
+
+    // write blocked (docs, counts?)*
+    for (i, docs) in postings.docs.buffers.iter().enumerate() {
+        if docs[0] > 0 {
+            // hold onto the start of each block in RAM, except the first; we know where that is.
+            skips.push(SkipInfo::create(docs[0], docs_writer, &pos_writer));
+        }
+        // delta-gap blocks of documents:
+        delta_gap(&docs, &mut buffer);
+
+        // encode docs:
+        let byte_len = stream_vbyte::encode::<Scalar>(&buffer, &mut encoded_docs);
+
+        // encoded-block-size:
+        write_vbyte(byte_len as u32, docs_writer)?;
+        // encoded-block:
+        docs_writer.write_all(&encoded_docs[..byte_len])?;
+
+        if has_counts {
+            let counts = postings.counts.buffers[i].as_slice();
+            debug_assert_eq!(counts.len(), docs.len());
+            let byte_len = stream_vbyte::encode::<Scalar>(counts, &mut encoded_counts);
+            // encoded-block-size:
+            write_vbyte(byte_len as u32, docs_writer)?;
+            // encoded-block:
+            docs_writer.write_all(&encoded_counts[..byte_len])?;
+        }
+        if has_positions {
+            let pos_writer = pos_writer.as_mut().unwrap();
+            let start = i * INDEX_CHUNK_SIZE;
+            let end = start + INDEX_CHUNK_SIZE;
+            let end = if end > doc_frequency {
+                doc_frequency
+            } else {
+                end
+            };
+            for buf in &postings.positions[start..end] {
+                pos_writer.write_all(buf)?;
+            }
+        }
+    }
+    // now prepare to write skips:
+    let skips_addr = docs_writer.tell();
+    let num_skips = skips.len() as u32;
+
+    // TODO: compression opportunity here: delta-gap each array.
+    write_vbyte(num_skips, docs_writer)?;
+    for skip in skips {
+        write_vbyte(skip.id, docs_writer)?;
+        write_vbyte_u64(skip.doc_addr, docs_writer)?;
+        if has_positions {
+            write_vbyte_u64(skip.pos_addr, docs_writer)?;
+        }
+    }
+
+    Ok(skips_addr)
+}
+
+pub(crate) const INDEX_CHUNK_SIZE: usize = 128;
 
 pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Result<()> {
     for (field, contents) in &indexer.postings {
@@ -73,45 +193,13 @@ pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Res
         let file_name = format!("{}.{}.post", segment, field.0);
         match schema.kind {
             FieldType::Categorical => todo! {},
-            FieldType::Textual(opts, _tok) => {
+            FieldType::Textual(_opts, _tok) => {
                 let mut writer = KeyValueWriter::create(dir, &file_name)?;
                 for (term_id, val) in contents {
                     writer.begin_pair(term_id.0)?;
                     let w = writer.value_writer();
-
-                    write_vbyte_u64(val.docs.len() as u64, w)?;
-                    write_vbyte_u64(val.total_term_frequency, w)?;
-                    match opts {
-                        TextOptions::Docs => {
-                            write_vbyte(0b1, w)?;
-                            let mut buffer = Vec::with_capacity(INDEX_CHUNK_SIZE);
-                            let mut encoded = vec![0u8; 128 * 5];
-                            let _doc_skips: Vec<u32> = val
-                                .docs
-                                .as_slice()
-                                .chunks(INDEX_CHUNK_SIZE)
-                                .map(|slice| slice[0])
-                                .collect();
-                            let mut doc_offsets = Vec::new();
-                            let mut offset = 0;
-                            for docs in val.docs.as_slice().chunks(INDEX_CHUNK_SIZE) {
-                                buffer.clear();
-                                let mut last_doc = docs[0];
-                                for doc in docs.iter() {
-                                    buffer.push(doc - last_doc);
-                                }
-                                doc_offsets.push(offset);
-                                let byte_len =
-                                    stream_vbyte::encode::<Scalar>(&buffer, &mut encoded);
-                                offset += byte_len;
-                                write_vbyte(byte_len as u32, w)?;
-                                w.write_all(&encoded[..byte_len])?;
-                            }
-                        }
-                        TextOptions::Counts => write_vbyte(0b11, w)?,
-                        TextOptions::Positions => write_vbyte(0b111, w)?,
-                    }
-
+                    let skip_addr = write_docs_counts_skips(val, w, None)?;
+                    println!("skip_addr! {}", skip_addr);
                     writer.finish_pair()?;
                     todo!("write posting lists");
                 }
