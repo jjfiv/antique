@@ -272,11 +272,14 @@ impl Indexer {
 
 #[cfg(test)]
 mod tests {
-    use crate::mem::document::{DocFields, TokenizerStyle};
+    use crate::mem::{
+        document::{DocFields, TokenizerStyle},
+        flush_segment,
+    };
 
     use super::*;
-    use std::fs::File;
     use std::io::Read;
+    use std::{fs::File, path::Path};
 
     #[test]
     fn test_indexer() {
@@ -336,6 +339,9 @@ mod tests {
                     .find_term_id(body_field, "the")
                     .expect("'the' exists as a token!")
             )
-        )
+        );
+
+        let path = Path::new(".").join("examine");
+        flush_segment(0, &path, &mut indexer).unwrap();
     }
 }

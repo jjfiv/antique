@@ -6,17 +6,17 @@ pub struct TermId(pub u32);
 
 /// Example: <body>, <head>, <title>, etc.
 #[repr(transparent)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct FieldId(pub u16);
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone, Serialize, Deserialize)]
 pub enum TextOptions {
     Docs,
     Counts,
     Positions,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FieldType {
     /// Sparse boolean as well as other categorical.
     Categorical,
@@ -34,7 +34,7 @@ pub enum FieldType {
     SparseFloat,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TokenizerStyle {
     Whitespace,
     Galago,
@@ -54,7 +54,7 @@ impl TokenizerStyle {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldMetadata {
     pub kind: FieldType,
     pub stored: bool,
