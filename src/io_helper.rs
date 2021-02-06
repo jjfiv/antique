@@ -1,17 +1,27 @@
 use crate::Error;
+use io::Seek;
 use memmap::{Mmap, MmapOptions};
-use std::convert::TryInto;
-use std::fmt;
-use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::{cmp::Ordering, str};
+use std::{convert::TryInto, fs::File};
+use std::{fmt, io};
+use std::{fs, io::SeekFrom};
 
 pub fn open_mmap_file(path: &Path) -> Result<Arc<Mmap>, Error> {
     let file = fs::File::open(path)?;
     let opts = MmapOptions::new();
     let mmap: Mmap = unsafe { opts.map(&file)? };
     Ok(Arc::new(mmap))
+}
+
+pub(crate) trait Teller {
+    fn tell(&mut self) -> io::Result<u64>;
+}
+impl Teller for File {
+    fn tell(&mut self) -> io::Result<u64> {
+        self.seek(SeekFrom::Current(0))
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -1,8 +1,8 @@
 use super::{
-    document::{DocField, DocFields, FieldId, FieldMetadata, FieldValue, TermId, TextOptions},
+    document::{DocField, FieldId, FieldMetadata, FieldValue, TermId, TextOptions},
     CompressedSortedIntSet,
 };
-use crate::mem::document::{FieldType, TokenizerStyle};
+use crate::mem::document::FieldType;
 use crate::HashMap;
 use crate::{stats::CountStats, DocId};
 use std::collections::BTreeMap;
@@ -10,13 +10,13 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub(crate) struct PostingListBuilder {
     /// index-paired with counts.
-    docs: CompressedSortedIntSet,
+    pub(crate) docs: CompressedSortedIntSet,
     /// index-paired with docs.
-    counts: Vec<u32>,
+    pub(crate) counts: Vec<u32>,
     /// encoded & d-gapped positions buffers, only.
-    positions: Vec<Vec<u8>>,
+    pub(crate) positions: Vec<Vec<u8>>,
     /// Total # of counts across all documents.
-    total_term_frequency: u64,
+    pub(crate) total_term_frequency: u64,
 }
 
 impl PostingListBuilder {
@@ -271,6 +271,8 @@ impl Indexer {
 
 #[cfg(test)]
 mod tests {
+    use crate::mem::document::{DocFields, TokenizerStyle};
+
     use super::*;
     use std::fs::File;
     use std::io::Read;

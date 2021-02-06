@@ -1,5 +1,4 @@
-use crate::{galago::tokenizer::tokenize_to_terms, DocId, HashMap};
-use std::collections::BTreeMap;
+use crate::galago::tokenizer::tokenize_to_terms;
 
 #[repr(transparent)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -81,6 +80,15 @@ pub enum FieldValue {
     Textual(String),
     Integer(u32),
     Floating(f32),
+}
+
+impl FieldValue {
+    pub(crate) fn as_str(&self) -> Option<&str> {
+        match self {
+            FieldValue::Categorical(x) | FieldValue::Textual(x) => Some(x.as_ref()),
+            FieldValue::Integer(_) | FieldValue::Floating(_) => None,
+        }
+    }
 }
 #[derive(Clone)]
 pub struct DocField {

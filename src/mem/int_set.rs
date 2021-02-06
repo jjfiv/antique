@@ -19,8 +19,7 @@ impl CompressedSortedIntSet {
         self.deltas.push(n - self.prev);
         self.prev = n
     }
-    #[cfg(test)]
-    fn iter(&self) -> DeltaIterator<std::iter::Cloned<core::slice::Iter<'_, u32>>> {
+    pub(crate) fn iter(&self) -> DeltaIterator<std::iter::Cloned<core::slice::Iter<'_, u32>>> {
         DeltaIterator::new(self.deltas.iter().cloned())
     }
     pub fn encode_vbyte(&self) -> Vec<u8> {
@@ -33,7 +32,7 @@ impl CompressedSortedIntSet {
     }
 }
 
-struct DeltaIterator<T>
+pub(crate) struct DeltaIterator<T>
 where
     T: Iterator<Item = u32>,
 {

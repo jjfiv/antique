@@ -1,24 +1,19 @@
-use std::{
-    fs::File,
-    io::{self, Seek, SeekFrom},
-    marker::PhantomData,
-};
+use io::Write;
+use std::io;
 
-use lz4_flex::{compress_prepend_size, decompress_size_prepended};
-
-trait Encoder<V, W>
+pub(crate) trait Encoder<V, W>
 where
     W: io::Write,
 {
     fn write(&mut self, item: &V, out: &mut W) -> io::Result<()>;
 }
 
-fn write_vbyte<W>(i: u32, out: &mut W) -> io::Result<()>
+pub(crate) fn write_vbyte<W>(i: u32, out: &mut W) -> io::Result<()>
 where
     W: io::Write,
 {
     // TODO: stack-vec
-    let mut buf = Vec::with_capacity(8);
+    let mut buf = Vec::with_capacity(5);
 
     if i < 1 << 7 {
         buf.push((i | 0x80) as u8);
@@ -42,11 +37,79 @@ where
         buf.push(((i >> 28) | 0x80) as u8);
     }
 
-    out.write(&buf);
+    let _ = out.write(&buf)?;
 
     Ok(())
 }
-struct GalagoU32VByte;
+
+pub(crate) fn write_vbyte_u64<W>(i: u64, out: &mut W) -> io::Result<()>
+where
+    W: io::Write,
+{
+    // TODO: stack-vec
+    let mut buf = Vec::with_capacity(9);
+
+    if i < 1 << 7 {
+        buf.push((i | 0x80) as u8);
+    } else if i < 1 << 14 {
+        buf.push((i & 0x7f) as u8);
+        buf.push(((i >> 7) | 0x80) as u8);
+    } else if i < 1 << 21 {
+        buf.push((i & 0x7f) as u8);
+        buf.push(((i >> 7) & 0x7f) as u8);
+        buf.push(((i >> 14) | 0x80) as u8);
+    } else if i < 1 << 28 {
+        buf.push((i & 0x7f) as u8);
+        buf.push(((i >> 7) & 0x7f) as u8);
+        buf.push(((i >> 14) & 0x7f) as u8);
+        buf.push(((i >> 21) | 0x80) as u8);
+    } else if i < 1 << 35 {
+        buf.push((i & 0x7f) as u8);
+        buf.push(((i >> 7) & 0x7f) as u8);
+        buf.push(((i >> 14) & 0x7f) as u8);
+        buf.push(((i >> 21) & 0x7f) as u8);
+        buf.push(((i >> 28) | 0x80) as u8);
+    } else if i < 1 << 42 {
+        buf.push((i & 0x7f) as u8);
+        buf.push(((i >> 7) & 0x7f) as u8);
+        buf.push(((i >> 14) & 0x7f) as u8);
+        buf.push(((i >> 21) & 0x7f) as u8);
+        buf.push(((i >> 28) | 0x7f) as u8);
+        buf.push(((i >> 35) | 0x80) as u8);
+    } else if i < 1 << 49 {
+        buf.push((i & 0x7f) as u8);
+        buf.push(((i >> 7) & 0x7f) as u8);
+        buf.push(((i >> 14) & 0x7f) as u8);
+        buf.push(((i >> 21) & 0x7f) as u8);
+        buf.push(((i >> 28) | 0x7f) as u8);
+        buf.push(((i >> 35) | 0x7f) as u8);
+        buf.push(((i >> 42) | 0x80) as u8);
+    } else if i < 1 << 56 {
+        buf.push((i & 0x7f) as u8);
+        buf.push(((i >> 7) & 0x7f) as u8);
+        buf.push(((i >> 14) & 0x7f) as u8);
+        buf.push(((i >> 21) & 0x7f) as u8);
+        buf.push(((i >> 28) | 0x7f) as u8);
+        buf.push(((i >> 35) | 0x7f) as u8);
+        buf.push(((i >> 42) | 0x7f) as u8);
+        buf.push(((i >> 49) | 0x80) as u8);
+    } else {
+        buf.push((i & 0x7f) as u8);
+        buf.push(((i >> 7) & 0x7f) as u8);
+        buf.push(((i >> 14) & 0x7f) as u8);
+        buf.push(((i >> 21) & 0x7f) as u8);
+        buf.push(((i >> 28) | 0x7f) as u8);
+        buf.push(((i >> 35) | 0x7f) as u8);
+        buf.push(((i >> 42) | 0x7f) as u8);
+        buf.push(((i >> 49) | 0x7f) as u8);
+        buf.push(((i >> 56) | 0x80) as u8);
+    }
+
+    let _ = out.write(&buf)?;
+
+    Ok(())
+}
+pub(crate) struct GalagoU32VByte;
 impl<W> Encoder<u32, W> for GalagoU32VByte
 where
     W: io::Write,
@@ -57,7 +120,7 @@ where
 }
 
 #[derive(Default)]
-struct LZ4StringEncoder {
+pub(crate) struct LZ4StringEncoder {
     buffer: Vec<u8>,
 }
 impl<S, W> Encoder<S, W> for LZ4StringEncoder
@@ -81,7 +144,7 @@ where
     }
 }
 
-struct UTF8Encoder;
+pub(crate) struct UTF8Encoder;
 impl<S, W> Encoder<S, W> for UTF8Encoder
 where
     S: AsRef<str>,
@@ -96,45 +159,15 @@ where
     }
 }
 
-struct SeqVarLenValuesWriter<V, E>
-where
-    E: Encoder<V, File>,
-{
-    output: File,
-    encoder: E,
-    _phantom: PhantomData<V>,
-}
-
-impl<V, E> SeqVarLenValuesWriter<V, E>
-where
-    E: Encoder<V, File>,
-{
-    fn new(output: File, encoder: E) -> Self {
-        Self {
-            output,
-            encoder,
-            _phantom: PhantomData::default(),
-        }
-    }
-
-    fn write(&mut self, value: &V) -> io::Result<()> {
-        self.encoder.write(value, &mut self.output)
-    }
-
-    fn tell(&mut self) -> io::Result<u64> {
-        self.output.seek(SeekFrom::Current(0))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs::File;
 
     use crate::io_helper::{self, DataInputStream, InputStream};
-    use io_helper::ArcInputStream;
+    use io_helper::{ArcInputStream, Teller};
     use tempfile::TempDir;
 
-    use super::{GalagoU32VByte, SeqVarLenValuesWriter, UTF8Encoder};
+    use super::{Encoder, GalagoU32VByte, UTF8Encoder};
 
     #[test]
     fn write_nums() {
@@ -142,12 +175,12 @@ mod tests {
         let path = tmp_dir.path().join("write_nums.tmp");
         let mut offsets = Vec::new();
         {
-            let file = File::create(&path).unwrap();
-            let mut writer = SeqVarLenValuesWriter::new(file, GalagoU32VByte);
+            let mut file = File::create(&path).unwrap();
+            let mut writer = GalagoU32VByte;
 
             for i in 0..10000 {
-                writer.write(&i).unwrap();
-                offsets.push(writer.tell().unwrap());
+                writer.write(&i, &mut file).unwrap();
+                offsets.push(file.tell().unwrap());
             }
         }
 
@@ -167,12 +200,12 @@ mod tests {
         let path = tmp_dir.path().join("write_strs.tmp");
         let mut offsets = Vec::new();
         {
-            let file = File::create(&path).unwrap();
-            let mut writer = SeqVarLenValuesWriter::new(file, UTF8Encoder);
+            let mut file = File::create(&path).unwrap();
+            let mut writer = UTF8Encoder;
 
             for i in 0..10000 {
-                writer.write(&format!("{:08x}", i)).unwrap();
-                offsets.push(writer.tell().unwrap());
+                writer.write(&format!("{:08x}", i), &mut file).unwrap();
+                offsets.push(file.tell().unwrap());
             }
         }
 
