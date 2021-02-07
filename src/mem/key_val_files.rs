@@ -12,16 +12,17 @@ use super::{
 };
 
 // Version up to 256:
-const U32_KEY_WRITER_MAGIC: u64 = 0xf1e2_d3c4_b5a6_0000 | 0x0001;
-const STR_KEY_WRITER_MAGIC: u64 = 0xf6e5_d4c3_b2a1_0000 | 0x0001;
+pub(crate) const U32_KEY_WRITER_MAGIC: u64 = 0xf1e2_d3c4_b5a6_0000 | 0x0001;
+pub(crate) const STR_KEY_WRITER_MAGIC: u64 = 0xf6e5_d4c3_b2a1_0000 | 0x0001;
 
 // Three types of blocks in a keys-file:
-const DENSE_LEAF_BLOCK: u8 = 0xaf; // 11101111
-const SPARSE_LEAF_BLOCK: u8 = 0xa0; // 1110000
-const STR_LEAF_BLOCK: u8 = 0xac; // 11101100
-const NODE_BLOCK: u8 = 0x10; // 00010000
+pub(crate) const DENSE_LEAF_BLOCK: u8 = 0xaf; // 11101111
+pub(crate) const SPARSE_LEAF_BLOCK: u8 = 0xa0; // 1110000
+pub(crate) const STR_LEAF_BLOCK: u8 = 0xac; // 11101100
+pub(crate) const NODE_BLOCK: u8 = 0x10; // 00010000
+pub(crate) const LINK_BLOCK_SIZE: usize = 128;
 
-const PAGE_4K: usize = 4096;
+pub(crate) const PAGE_4K: usize = 4096;
 
 pub struct CountingFileWriter {
     path: PathBuf,
@@ -102,7 +103,7 @@ impl U32KeyWriter {
     pub fn create(path: &Path, total_keys: u32, page_size: u32) -> io::Result<Self> {
         let mut output = CountingFileWriter::new(File::create(path)?)?;
         // u64-MAGIC
-        output.write_all(&U32_KEY_WRITER_MAGIC.to_le_bytes())?;
+        output.write_all(&U32_KEY_WRITER_MAGIC.to_be_bytes())?;
         Ok(Self {
             output,
             total_keys,
@@ -116,6 +117,7 @@ impl U32KeyWriter {
     }
 
     pub fn start_dense_key_block(&mut self, start_key: u32, num_keys: u32) -> io::Result<()> {
+        self.align(32);
         // record this block for posterity;
         self.skips
             .push(IdAndValueAddr::new(start_key, self.output.tell()));
@@ -137,6 +139,7 @@ impl U32KeyWriter {
         if is_contiguous(keys) {
             self.start_dense_key_block(keys[0], num_keys)?;
         } else {
+            self.align(32);
             // record this block for posterity;
             self.skips
                 .push(IdAndValueAddr::new(keys[0], self.output.tell()));
@@ -171,17 +174,27 @@ impl U32KeyWriter {
         Ok(())
     }
 
+    // Align to n-byte window.
+    pub fn align(&mut self, n: u64) {
+        while self.output.tell() % n != 0 {
+            self.output.put(0);
+        }
+    }
+
     pub fn finish<S: serde::Serialize>(&mut self, metadata: &S) -> io::Result<()> {
         // make sure this is statefully called in the correct order.
         assert_eq!(self.keys_written, self.total_keys);
         assert_eq!(self.nodes_start, 0);
+
+        self.align(64);
         self.nodes_start = self.output.tell();
 
         while self.skips.len() > 1 {
             let current_level: Vec<_> = self.skips.drain(..).collect();
             println!("self.skips; current_level.len={}", current_level.len());
-            for ptrs in current_level.chunks(self.page_size as usize) {
+            for ptrs in current_level.chunks(LINK_BLOCK_SIZE) {
                 // build next, logarithmically smaller level of tree:
+                self.align(32);
                 let here = self.output.tell();
                 self.skips.push(IdAndValueAddr::new(ptrs[0].id, here));
 
@@ -211,17 +224,17 @@ impl U32KeyWriter {
             self.output.put(0);
         }
         // u64
-        self.output.write_all(&metadata_addr.to_le_bytes())?;
+        self.output.write_all(&metadata_addr.to_be_bytes())?;
         // u64
-        self.output.write_all(&self.root_addr.to_le_bytes())?;
+        self.output.write_all(&self.root_addr.to_be_bytes())?;
         // u64
-        self.output.write_all(&self.nodes_start.to_le_bytes())?;
+        self.output.write_all(&self.nodes_start.to_be_bytes())?;
         // u32
-        self.output.write_all(&self.total_keys.to_le_bytes())?;
+        self.output.write_all(&self.total_keys.to_be_bytes())?;
         // u32
-        self.output.write_all(&self.page_size.to_le_bytes())?;
+        self.output.write_all(&self.page_size.to_be_bytes())?;
         // u64-MAGIC
-        self.output.write_all(&U32_KEY_WRITER_MAGIC.to_le_bytes())?;
+        self.output.write_all(&U32_KEY_WRITER_MAGIC.to_be_bytes())?;
 
         // make sure it gets out of RAM.
         self.output.flush()?;
@@ -276,7 +289,7 @@ impl StrKeyWriter {
     pub fn create(path: &Path, total_keys: u32, page_size: u32) -> io::Result<Self> {
         let mut output = CountingFileWriter::new(File::create(path)?)?;
         // u64-MAGIC
-        output.write_all(&STR_KEY_WRITER_MAGIC.to_le_bytes())?;
+        output.write_all(&STR_KEY_WRITER_MAGIC.to_be_bytes())?;
         Ok(Self {
             output,
             total_keys,
@@ -370,17 +383,17 @@ impl StrKeyWriter {
             self.output.put(0);
         }
         // u64
-        self.output.write_all(&metadata_addr.to_le_bytes())?;
+        self.output.write_all(&metadata_addr.to_be_bytes())?;
         // u64
-        self.output.write_all(&self.root_addr.to_le_bytes())?;
+        self.output.write_all(&self.root_addr.to_be_bytes())?;
         // u64
-        self.output.write_all(&self.nodes_start.to_le_bytes())?;
+        self.output.write_all(&self.nodes_start.to_be_bytes())?;
         // u32
-        self.output.write_all(&self.total_keys.to_le_bytes())?;
+        self.output.write_all(&self.total_keys.to_be_bytes())?;
         // u32
-        self.output.write_all(&self.page_size.to_le_bytes())?;
+        self.output.write_all(&self.page_size.to_be_bytes())?;
         // u64-MAGIC
-        self.output.write_all(&STR_KEY_WRITER_MAGIC.to_le_bytes())?;
+        self.output.write_all(&STR_KEY_WRITER_MAGIC.to_be_bytes())?;
 
         // make sure it gets out of RAM.
         self.output.flush()?;
