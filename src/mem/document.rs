@@ -1,7 +1,7 @@
 use crate::galago::tokenizer::tokenize_to_terms;
 
 #[repr(transparent)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TermId(pub u32);
 
 /// Example: <body>, <head>, <title>, etc.

@@ -44,13 +44,16 @@ impl PostingListBuilder {
 
 #[derive(Default)]
 pub(crate) struct DenseU32FieldBuilder {
-    total: u64,
+    pub(crate) total: u64,
     /// Every doc must have an entry for every T.
     blob: Vec<u32>,
 }
 
 impl DenseU32FieldBuilder {
-    fn num_docs(&self) -> u32 {
+    pub(crate) fn as_slice(&self) -> &[u32] {
+        &self.blob
+    }
+    pub(crate) fn num_docs(&self) -> u32 {
         return self.blob.len() as u32;
     }
     fn insert(&mut self, doc_id: DocId, x: u32) {
@@ -449,7 +452,8 @@ mod tests {
             )
         );
 
-        let path = tmpdir.path().to_path_buf();
+        //let path = tmpdir.path().to_path_buf();
+        let path = Path::new("examine").to_path_buf();
         flush_segment(0, &path, &mut indexer).unwrap();
     }
 }

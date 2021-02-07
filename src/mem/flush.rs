@@ -9,7 +9,7 @@ use super::{
     document::{FieldId, FieldMetadata, FieldType, TextOptions},
     encoders::{write_vbyte, write_vbyte_u64, Encoder, LZ4StringEncoder},
     index::{BTreeMapChunkedIter, Indexer, PostingListBuilder},
-    key_val_files::{CountingFileWriter, U32KeyWriter},
+    key_val_files::{CountingFileWriter, StrKeyWriter, U32KeyWriter},
 };
 
 // Let's deal with indexing.
@@ -65,6 +65,13 @@ pub fn flush_segment(segment: u32, dir: &PathBuf, indexer: &mut Indexer) -> io::
         dir.join(format!("{}.fields.json", segment)),
         serde_json::to_string(&field_info)?,
     )?;
+
+    println!("flush_lengths");
+    flush_lengths(segment, dir, indexer)?;
+
+    println!("flush_vocabularies");
+    flush_vocabularies(segment, dir, indexer)?;
+    println!(".flush_vocabularies");
     println!("flush_direct_indexes");
     flush_direct_indexes(segment, dir, indexer)?;
     indexer.stored_fields.clear();
@@ -77,6 +84,43 @@ pub fn flush_segment(segment: u32, dir: &PathBuf, indexer: &mut Indexer) -> io::
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
+struct LengthsMetadata {
+    field: u16,
+    version: u32,
+    num_documents: u32,
+    total_positions: u64,
+}
+
+pub fn flush_lengths(segment: u32, dir: &PathBuf, indexer: &mut Indexer) -> io::Result<()> {
+    for (field, entries) in &indexer.lengths {
+        let path = dir.join(&format!("{}.{}.len", segment, field.0));
+        let page_size = TERMS_PER_VOCAB_BLOCK as u32;
+
+        let metadata = LengthsMetadata {
+            field: field.0,
+            version: 1,
+            num_documents: entries.num_docs(),
+            total_positions: entries.total,
+        };
+
+        let mut writer = U32KeyWriter::create(&path, entries.num_docs(), page_size)?;
+        let mut start = 0;
+        let mut encoded_buf = vec![0u8; 5 * TERMS_PER_VOCAB_BLOCK];
+        for lengths in entries.as_slice().chunks(INDEX_CHUNK_SIZE) {
+            let count = lengths.len() as u32;
+            writer.start_dense_key_block(start, count)?;
+
+            let encoded_len = stream_vbyte::encode::<Scalar>(lengths, &mut encoded_buf);
+            writer.write_v32(encoded_len as u32)?;
+            writer.write_bytes(&encoded_buf[..encoded_len])?;
+            start += count;
+        }
+        writer.finish(&metadata)?;
+    }
+    Ok(())
+}
+
 fn delta_gap(input: &[u32], output: &mut Vec<u32>) {
     output.clear();
     output.reserve(input.len());
@@ -86,6 +130,7 @@ fn delta_gap(input: &[u32], output: &mut Vec<u32>) {
         prev = *it;
     }
 }
+
 struct SkipInfo {
     id: u32,
     doc_addr: u64,
@@ -189,11 +234,19 @@ fn write_docs_counts_skips(
 pub(crate) const INDEX_CHUNK_SIZE: usize = 128;
 pub(crate) const KEY_TERMS_PER_BLOCK: usize = 64;
 
+#[derive(Serialize, Deserialize)]
+struct PostingsMetadata {
+    field: u16,
+    field_type: FieldType,
+    value_file: String,
+    positions_file: Option<String>,
+}
+
 pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Result<()> {
     for (field, contents) in &indexer.postings {
         let schema = indexer.schema.get(&field).unwrap().clone();
         let file_name = format!("{}.{}.inv", segment, field.0);
-        match schema.kind {
+        match &schema.kind {
             FieldType::Categorical => {
                 let page_size = KEY_TERMS_PER_BLOCK as u32;
                 let mut key_writer = U32KeyWriter::create(
@@ -201,8 +254,14 @@ pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Res
                     contents.len() as u32,
                     page_size,
                 )?;
+                let metadata = PostingsMetadata {
+                    field: field.0,
+                    field_type: schema.kind.clone(),
+                    value_file: format!("{}.dv", &file_name),
+                    positions_file: None,
+                };
                 let mut docs_writer =
-                    CountingFileWriter::create(dir.join(format!("{}.dv", &file_name)).as_ref())?;
+                    CountingFileWriter::create(dir.join(&metadata.value_file).as_ref())?;
 
                 let mut iter = BTreeMapChunkedIter::new(contents, KEY_TERMS_PER_BLOCK);
                 let mut key_buffer = Vec::with_capacity(KEY_TERMS_PER_BLOCK);
@@ -234,7 +293,7 @@ pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Res
                         }
                     }
                 }
-                key_writer.finish()?;
+                key_writer.finish(&metadata)?;
             }
             FieldType::Textual(opts, _tok) => {
                 let page_size = KEY_TERMS_PER_BLOCK as u32;
@@ -243,13 +302,21 @@ pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Res
                     contents.len() as u32,
                     page_size,
                 )?;
+                let metadata = PostingsMetadata {
+                    field: field.0,
+                    field_type: schema.kind.clone(),
+                    value_file: format!("{}.dv", &file_name),
+                    positions_file: match opts {
+                        TextOptions::Docs | TextOptions::Counts => None,
+                        TextOptions::Positions => Some(format!("{}.pos", file_name)),
+                    },
+                };
                 let mut docs_writer =
-                    CountingFileWriter::create(dir.join(format!("{}.dv", &file_name)).as_ref())?;
-                let mut pos_writer = match opts {
-                    TextOptions::Docs | TextOptions::Counts => None,
-                    TextOptions::Positions => Some(CountingFileWriter::create(
-                        dir.join(format!("{}.pos", file_name)).as_ref(),
-                    )?),
+                    CountingFileWriter::create(dir.join(&metadata.value_file).as_ref())?;
+                let mut pos_writer = if let Some(name) = metadata.positions_file.as_ref() {
+                    Some(CountingFileWriter::create(dir.join(name).as_ref())?)
+                } else {
+                    None
                 };
                 let mut iter = BTreeMapChunkedIter::new(contents, KEY_TERMS_PER_BLOCK);
                 let mut key_buffer = Vec::with_capacity(KEY_TERMS_PER_BLOCK);
@@ -286,7 +353,7 @@ pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Res
                         }
                     }
                 }
-                key_writer.finish()?;
+                key_writer.finish(&metadata)?;
             }
             FieldType::Boolean | FieldType::DenseInt | FieldType::DenseFloat => {
                 panic!("Dense fields should not have postings entries...")
@@ -299,6 +366,13 @@ pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Res
 
 pub(crate) const DOC_IDS_PER_CORPUS_BLOCK: usize = 64;
 
+#[derive(Serialize, Deserialize)]
+pub struct DirectIndexMetadata {
+    field: u16,
+    val_file: String,
+    val_file_len: u64,
+}
+
 pub fn flush_direct_indexes(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Result<()> {
     let mut lz4 = LZ4StringEncoder::default();
     for (field, contents) in &indexer.stored_fields {
@@ -308,13 +382,17 @@ pub fn flush_direct_indexes(segment: u32, dir: &PathBuf, indexer: &Indexer) -> i
             "field = {:?}, schema={:?}, file={}",
             field, schema, file_name
         );
+        let mut metadata = DirectIndexMetadata {
+            field: field.0,
+            val_file: format!("{}.v", &file_name),
+            val_file_len: 0,
+        };
         let mut key_writer = U32KeyWriter::create(
             dir.join(&file_name).as_ref(),
             contents.len() as u32,
             DOC_IDS_PER_CORPUS_BLOCK as u32,
         )?;
-        let mut val_writer =
-            CountingFileWriter::create(dir.join(format!("{}.v", &file_name)).as_ref())?;
+        let mut val_writer = CountingFileWriter::create(dir.join(&metadata.val_file).as_ref())?;
 
         match schema.kind {
             // Only textual fields should be separated, CLOB/BLOB style...
@@ -363,7 +441,60 @@ pub fn flush_direct_indexes(segment: u32, dir: &PathBuf, indexer: &Indexer) -> i
             | FieldType::SparseFloat => todo! {},
         } // match
         println!("key_writer.finish()");
-        key_writer.finish()?;
+
+        metadata.val_file_len = val_writer.tell();
+        key_writer.finish(&metadata)?;
     } //field-loop.
+    Ok(())
+}
+
+pub(crate) const TERMS_PER_VOCAB_BLOCK: usize = 64;
+
+#[derive(Serialize, Deserialize)]
+pub struct VocabularyMetadata {
+    field: u16,
+    first_key: String,
+    last_key: String,
+}
+
+pub fn flush_vocabularies(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Result<()> {
+    for (field, vocab) in &indexer.vocab {
+        /* Debugging
+        std::fs::write(
+            dir.join(format!("{}.{}.vocab.json", segment, field.0)),
+            serde_json::to_string(&vocab)?,
+        )?;
+        */
+
+        let mut metadata = VocabularyMetadata {
+            field: field.0,
+            first_key: String::new(),
+            last_key: String::new(),
+        };
+
+        let num_keys = vocab.len();
+        let path = dir.join(&format!("{}.{}.vocab", segment, field.0));
+        let page_size = TERMS_PER_VOCAB_BLOCK as u32;
+        let mut writer = StrKeyWriter::create(&path, num_keys as u32, page_size)?;
+        let mut iter = BTreeMapChunkedIter::new(vocab, page_size as usize);
+        let mut keys_written = 0;
+
+        let mut terms_buffer = Vec::with_capacity(TERMS_PER_VOCAB_BLOCK);
+        while let Some(first_key) = iter.next() {
+            if metadata.first_key.len() == 0 {
+                metadata.first_key = first_key;
+            }
+            let keys = iter.keys();
+            terms_buffer.clear();
+            terms_buffer.extend(iter.vals().iter().map(|ti| ti.0));
+            writer.write_leaf_block(keys, &terms_buffer)?;
+            keys_written += keys.len();
+            if keys_written == num_keys {
+                metadata.last_key = keys[keys.len() - 1].clone();
+            }
+        }
+        writer.finish(&metadata)?;
+    }
+
     Ok(())
 }
