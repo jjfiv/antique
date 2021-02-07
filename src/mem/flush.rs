@@ -8,8 +8,8 @@ use stream_vbyte::Scalar;
 use super::{
     document::{FieldId, FieldMetadata, FieldType, TextOptions},
     encoders::{write_vbyte, write_vbyte_u64, Encoder, LZ4StringEncoder},
-    index::{is_contiguous, BTreeMapChunkedIter, Indexer, PostingListBuilder},
-    key_val_files::{CountingFileWriter, DenseKeyWriter},
+    index::{BTreeMapChunkedIter, Indexer, PostingListBuilder},
+    key_val_files::{CountingFileWriter, U32KeyWriter},
 };
 
 // Let's deal with indexing.
@@ -196,7 +196,7 @@ pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Res
         match schema.kind {
             FieldType::Categorical => {
                 let page_size = KEY_TERMS_PER_BLOCK as u32;
-                let mut key_writer = DenseKeyWriter::create(
+                let mut key_writer = U32KeyWriter::create(
                     dir.join(&file_name).as_ref(),
                     contents.len() as u32,
                     page_size,
@@ -213,14 +213,9 @@ pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Res
                         key_buffer.push(key.0);
                     }
                     let vals = iter.vals();
+                    key_writer.start_key_block(&key_buffer)?;
 
-                    if !is_contiguous(&key_buffer) {
-                        panic!("Need to implement sparse key-spaces!")
-                    }
-
-                    for (term_id, val) in key_buffer.iter().cloned().zip(vals) {
-                        key_writer.write_key(term_id)?;
-
+                    for (_term_id, val) in key_buffer.iter().cloned().zip(vals) {
                         // grab stats!
                         let df = val.docs.len() as u64;
 
@@ -243,7 +238,7 @@ pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Res
             }
             FieldType::Textual(opts, _tok) => {
                 let page_size = KEY_TERMS_PER_BLOCK as u32;
-                let mut key_writer = DenseKeyWriter::create(
+                let mut key_writer = U32KeyWriter::create(
                     dir.join(&file_name).as_ref(),
                     contents.len() as u32,
                     page_size,
@@ -266,13 +261,9 @@ pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Res
                     }
                     let vals = iter.vals();
 
-                    if !is_contiguous(&key_buffer) {
-                        panic!("Need to implement sparse key-spaces!")
-                    }
+                    key_writer.start_key_block(&key_buffer)?;
 
-                    for (term_id, val) in key_buffer.iter().cloned().zip(vals) {
-                        key_writer.write_key(term_id)?;
-
+                    for (_term_id, val) in key_buffer.iter().cloned().zip(vals) {
                         // grab stats!
                         let df = val.docs.len() as u64;
                         let cf = val.total_term_frequency;
@@ -317,7 +308,7 @@ pub fn flush_direct_indexes(segment: u32, dir: &PathBuf, indexer: &Indexer) -> i
             "field = {:?}, schema={:?}, file={}",
             field, schema, file_name
         );
-        let mut key_writer = DenseKeyWriter::create(
+        let mut key_writer = U32KeyWriter::create(
             dir.join(&file_name).as_ref(),
             contents.len() as u32,
             DOC_IDS_PER_CORPUS_BLOCK as u32,
@@ -342,13 +333,9 @@ pub fn flush_direct_indexes(segment: u32, dir: &PathBuf, indexer: &Indexer) -> i
                     }
                     let vals = iter.vals();
 
-                    if !is_contiguous(&key_buffer) {
-                        panic!("Need to implement sparse key-spaces!")
-                    }
+                    key_writer.start_key_block(&key_buffer)?;
 
-                    for (doc_id, val) in key_buffer.iter().cloned().zip(vals) {
-                        // begin key!
-                        key_writer.write_key(doc_id)?;
+                    for (_doc_id, val) in key_buffer.iter().cloned().zip(vals) {
                         // 0b001xxxxx (small value inline with keys!)
                         let data = val
                             .as_str()

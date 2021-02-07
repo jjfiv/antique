@@ -6,7 +6,10 @@ use std::{
 
 use crate::io_helper::Teller;
 
-use super::encoders::{write_vbyte, write_vbyte_u64};
+use super::{
+    encoders::{write_vbyte, write_vbyte_u64},
+    index::is_contiguous,
+};
 
 // Version up to 256:
 const DENSE_KEY_WRITER_MAGIC: u64 = 0xf1e2_d3c4_b5a6_0000 | 0x0001;
@@ -83,7 +86,7 @@ impl CountingFileWriter {
     }
 }
 
-pub struct DenseKeyWriter {
+pub struct U32KeyWriter {
     output: CountingFileWriter,
     skips: Vec<IdAndValueAddr>,
     total_keys: u32,
@@ -93,7 +96,7 @@ pub struct DenseKeyWriter {
     page_size: u32,
 }
 
-impl DenseKeyWriter {
+impl U32KeyWriter {
     pub fn create(path: &Path, total_keys: u32, page_size: u32) -> io::Result<Self> {
         let mut output = CountingFileWriter::new(File::create(path)?)?;
         // u64-MAGIC
@@ -109,22 +112,36 @@ impl DenseKeyWriter {
             skips: Vec::new(),
         })
     }
-    pub fn write_key(&mut self, key: u32) -> io::Result<()> {
-        debug_assert_eq!(key, self.keys_written);
-        if key % self.page_size == 0 {
-            self.write_key_block(key, (self.total_keys - key).min(self.page_size))?;
-        }
-        self.keys_written += 1;
-        Ok(())
-    }
-    /// Framing it this way ensures that writer has control of key-block sizes.
-    fn write_key_block(&mut self, first_key: u32, num_keys: u32) -> io::Result<()> {
+
+    /// Every block is either dense or sparse:
+    /// dense, #-of-keys, first ; val-data*
+    /// sparse, #-of-keys, delta-gapped keys* ; val-data*;
+    pub fn start_key_block(&mut self, keys: &[u32]) -> io::Result<()> {
+        // record this block for posterity;
         self.skips
-            .push(IdAndValueAddr::new(first_key, self.output.tell()));
-        self.output.put(DENSE_LEAF_BLOCK);
-        self.write_v32(num_keys)?;
+            .push(IdAndValueAddr::new(keys[0], self.output.tell()));
+
+        let num_keys = keys.len() as u32;
+        if is_contiguous(keys) {
+            self.output.put(DENSE_LEAF_BLOCK);
+            self.write_v32(num_keys)?;
+            self.write_v32(keys[0])?;
+        } else {
+            self.output.put(SPARSE_LEAF_BLOCK);
+            self.write_v32(num_keys)?;
+
+            // delta-gap and write keys:
+            let mut prev = 0; // first is not delta-gapped.
+            for k in keys {
+                self.write_v32(k - prev)?;
+                prev = *k;
+            }
+        }
+        self.keys_written += keys.len() as u32;
+
         Ok(())
     }
+
     pub fn write_v64(&mut self, x: u64) -> io::Result<usize> {
         write_vbyte_u64(x, &mut self.output)
     }
@@ -191,11 +208,11 @@ impl DenseKeyWriter {
         Ok(())
     }
 }
-impl Drop for DenseKeyWriter {
+impl Drop for U32KeyWriter {
     fn drop(&mut self) {
         if self.root_addr == 0 {
             self.finish()
-                .expect("Error in finish for DenseKeyWriter drop!")
+                .expect("Error in finish for U32KeyWriter drop!")
         }
     }
 }
