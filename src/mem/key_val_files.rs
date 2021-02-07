@@ -12,9 +12,9 @@ use super::{
 };
 
 // Version up to 256:
-const DENSE_KEY_WRITER_MAGIC: u64 = 0xf1e2_d3c4_b5a6_0000 | 0x0001;
+const U32_KEY_WRITER_MAGIC: u64 = 0xf1e2_d3c4_b5a6_0000 | 0x0001;
 
-// Two types of blocks in a keys-file:
+// Three types of blocks in a keys-file:
 const DENSE_LEAF_BLOCK: u8 = 0xaf; // 11101111
 const SPARSE_LEAF_BLOCK: u8 = 0xa0; // 1110000;
 const NODE_BLOCK: u8 = 0x10; // 00010000
@@ -100,7 +100,7 @@ impl U32KeyWriter {
     pub fn create(path: &Path, total_keys: u32, page_size: u32) -> io::Result<Self> {
         let mut output = CountingFileWriter::new(File::create(path)?)?;
         // u64-MAGIC
-        output.write_all(&DENSE_KEY_WRITER_MAGIC.to_le_bytes())?;
+        output.write_all(&U32_KEY_WRITER_MAGIC.to_le_bytes())?;
         Ok(Self {
             output,
             total_keys,
@@ -200,8 +200,7 @@ impl U32KeyWriter {
         // u32
         self.output.write_all(&self.page_size.to_le_bytes())?;
         // u64-MAGIC
-        self.output
-            .write_all(&DENSE_KEY_WRITER_MAGIC.to_le_bytes())?;
+        self.output.write_all(&U32_KEY_WRITER_MAGIC.to_le_bytes())?;
 
         // make sure it gets out of RAM.
         self.output.flush()?;
