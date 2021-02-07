@@ -10,8 +10,10 @@ use super::encoders::{write_vbyte, write_vbyte_u64};
 
 // Version up to 256:
 const DENSE_KEY_WRITER_MAGIC: u64 = 0xf1e2_d3c4_b5a6_0000 | 0x0001;
+
 // Two types of blocks in a keys-file:
-const LEAF_BLOCK: u8 = 0xaf; // 11101111
+const DENSE_LEAF_BLOCK: u8 = 0xaf; // 11101111
+const SPARSE_LEAF_BLOCK: u8 = 0xa0; // 1110000;
 const NODE_BLOCK: u8 = 0x10; // 00010000
 
 const PAGE_4K: usize = 4096;
@@ -82,7 +84,7 @@ impl CountingFileWriter {
 }
 
 pub struct DenseKeyWriter {
-    pub output: CountingFileWriter,
+    output: CountingFileWriter,
     skips: Vec<IdAndValueAddr>,
     total_keys: u32,
     keys_written: u32,
@@ -119,7 +121,7 @@ impl DenseKeyWriter {
     fn write_key_block(&mut self, first_key: u32, num_keys: u32) -> io::Result<()> {
         self.skips
             .push(IdAndValueAddr::new(first_key, self.output.tell()));
-        self.output.put(LEAF_BLOCK);
+        self.output.put(DENSE_LEAF_BLOCK);
         self.write_v32(num_keys)?;
         Ok(())
     }
@@ -128,6 +130,10 @@ impl DenseKeyWriter {
     }
     pub fn write_v32(&mut self, x: u32) -> io::Result<usize> {
         write_vbyte(x, &mut self.output)
+    }
+    pub fn write_bytes(&mut self, x: &[u8]) -> io::Result<usize> {
+        self.output.write_all(x)?;
+        Ok(x.len())
     }
     pub fn put(&mut self, x: u8) -> io::Result<()> {
         self.output.put(x);

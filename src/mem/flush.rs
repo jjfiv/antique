@@ -307,19 +307,21 @@ pub fn flush_direct_indexes(segment: u32, dir: &PathBuf, indexer: &Indexer) -> i
                     key_writer.write_key(doc_id.0)?;
                     // 0b001xxxxx (small value inline with keys!)
                     println!("doc_id={}", doc_id.0);
-                    let data = val.as_str().unwrap();
+                    let data = val
+                        .as_str()
+                        .expect("data value expected for Textual/Categorical field");
 
                     println!("doc_id={}", doc_id.0);
                     if data.len() < 32 {
                         let byte_len = data.len() as u8;
-                        key_writer.put(0b0010_0000u8 | byte_len).unwrap();
-                        key_writer.output.write_all(&data.as_bytes()).unwrap();
+                        key_writer.put(0b0010_0000u8 | byte_len)?;
+                        key_writer.write_bytes(&data.as_bytes())?;
                     } else {
-                        key_writer.put(0x00).unwrap();
-                        key_writer.write_v64(val_writer.tell()).unwrap();
+                        key_writer.put(0x00)?;
+                        key_writer.write_v64(val_writer.tell())?;
                         scratch.clear();
                         scratch.push_str(data);
-                        lz4.write(&scratch, &mut val_writer).unwrap();
+                        lz4.write(&scratch, &mut val_writer)?;
                     }
                     println!("doc_id={}", doc_id.0);
                 }
