@@ -270,6 +270,71 @@ impl Indexer {
     }
 }
 
+pub struct BTreeMapChunkedIter<'src, K, V>
+where
+    K: Clone,
+{
+    iter: std::collections::btree_map::Iter<'src, K, V>,
+    pub key_buffer: Vec<&'src K>,
+    pub val_buffer: Vec<&'src V>,
+    pub page_size: usize,
+}
+
+impl<'src, K, V> BTreeMapChunkedIter<'src, K, V>
+where
+    K: Clone,
+{
+    pub fn new(tree: &'src BTreeMap<K, V>, page_size: usize) -> Self {
+        Self {
+            iter: tree.iter(),
+            key_buffer: Vec::with_capacity(page_size),
+            val_buffer: Vec::with_capacity(page_size),
+            page_size: page_size,
+        }
+    }
+    pub fn keys(&self) -> &[&'src K] {
+        &self.key_buffer
+    }
+    pub fn vals(&self) -> &[&'src V] {
+        &self.val_buffer
+    }
+}
+
+impl<'tree, K, V> Iterator for BTreeMapChunkedIter<'tree, K, V>
+where
+    K: Clone,
+{
+    type Item = K;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.key_buffer.clear();
+        self.val_buffer.clear();
+        for _ in 0..self.page_size {
+            if let Some((k, v)) = self.iter.next() {
+                self.key_buffer.push(k);
+                self.val_buffer.push(v);
+            } else {
+                break;
+            }
+        }
+        self.key_buffer.get(0).cloned().cloned()
+    }
+}
+
+pub fn is_contiguous(ids: &[u32]) -> bool {
+    if ids.len() == 0 {
+        return true;
+    }
+    let mut prev = ids[0];
+    for current in ids[1..].iter().cloned() {
+        if prev + 1 != current {
+            return false;
+        }
+        prev = current;
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use crate::mem::{
@@ -280,6 +345,46 @@ mod tests {
     use super::*;
     use std::io::Read;
     use std::{fs::File, path::Path};
+
+    #[test]
+    fn test_btreemap_chunks() {
+        let mut map = BTreeMap::new();
+        let mut vec: Vec<u32> = Vec::new();
+        for i in 0..1000 {
+            map.insert(i, i * 3);
+            vec.push(i * 3);
+        }
+        let mut map_iter = BTreeMapChunkedIter::new(&map, 75);
+        let mut vec_iter = vec.chunks(75);
+
+        loop {
+            let m = map_iter.next();
+            let v = vec_iter.next();
+            if v.is_none() {
+                assert!(m.is_none());
+                break;
+            }
+            let m = m.unwrap();
+            let vs = v.unwrap();
+            let keyspace = map_iter
+                .keys()
+                .iter()
+                .cloned()
+                .cloned()
+                .collect::<Vec<u32>>();
+            assert!(is_contiguous(&keyspace));
+            assert_eq!(m * 3, vs[0]);
+            assert_eq!(
+                map_iter
+                    .vals()
+                    .iter()
+                    .cloned()
+                    .cloned()
+                    .collect::<Vec<u32>>(),
+                vs
+            );
+        }
+    }
 
     #[test]
     fn test_indexer() {

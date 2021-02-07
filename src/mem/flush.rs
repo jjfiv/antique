@@ -8,7 +8,7 @@ use stream_vbyte::Scalar;
 use super::{
     document::{FieldId, FieldMetadata, FieldType, TextOptions},
     encoders::{write_vbyte, write_vbyte_u64, Encoder, LZ4StringEncoder},
-    index::{Indexer, PostingListBuilder},
+    index::{is_contiguous, BTreeMapChunkedIter, Indexer, PostingListBuilder},
     key_val_files::{CountingFileWriter, DenseKeyWriter},
 };
 
@@ -204,24 +204,39 @@ pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Res
                 let mut docs_writer =
                     CountingFileWriter::create(dir.join(format!("{}.dv", &file_name)).as_ref())?;
 
-                for (term_id, val) in contents {
-                    key_writer.write_key(term_id.0)?;
+                let mut iter = BTreeMapChunkedIter::new(contents, KEY_TERMS_PER_BLOCK);
+                let mut key_buffer = Vec::with_capacity(KEY_TERMS_PER_BLOCK);
 
-                    // grab stats!
-                    let df = val.docs.len() as u64;
+                while let Some(_first_id) = iter.next() {
+                    key_buffer.clear();
+                    for key in iter.keys() {
+                        key_buffer.push(key.0);
+                    }
+                    let vals = iter.vals();
 
-                    // now write actual key-data:
-                    key_writer.write_v64(df)?;
-                    if df < 5 {
-                        for doc in &val.docs.buffers[0] {
-                            key_writer.write_v32(*doc)?;
+                    if !is_contiguous(&key_buffer) {
+                        panic!("Need to implement sparse key-spaces!")
+                    }
+
+                    for (term_id, val) in key_buffer.iter().cloned().zip(vals) {
+                        key_writer.write_key(term_id)?;
+
+                        // grab stats!
+                        let df = val.docs.len() as u64;
+
+                        // now write actual key-data:
+                        key_writer.write_v64(df)?;
+                        if df < 5 {
+                            for doc in &val.docs.buffers[0] {
+                                key_writer.write_v32(*doc)?;
+                            }
+                        } else {
+                            let docs_addr = docs_writer.tell();
+                            let skip_addr = write_docs_counts_skips(val, &mut docs_writer, None)?;
+                            key_writer.write_v64(docs_addr)?;
+                            // write skip-offset rather than absolute address for vbyte savings.
+                            key_writer.write_v64(skip_addr - docs_addr)?;
                         }
-                    } else {
-                        let docs_addr = docs_writer.tell();
-                        let skip_addr = write_docs_counts_skips(val, &mut docs_writer, None)?;
-                        key_writer.write_v64(docs_addr)?;
-                        // write skip-offset rather than absolute address for vbyte savings.
-                        key_writer.write_v64(skip_addr - docs_addr)?;
                     }
                 }
                 key_writer.finish()?;
@@ -241,28 +256,43 @@ pub fn flush_postings(segment: u32, dir: &PathBuf, indexer: &Indexer) -> io::Res
                         dir.join(format!("{}.pos", file_name)).as_ref(),
                     )?),
                 };
-                for (term_id, val) in contents {
-                    key_writer.write_key(term_id.0)?;
+                let mut iter = BTreeMapChunkedIter::new(contents, KEY_TERMS_PER_BLOCK);
+                let mut key_buffer = Vec::with_capacity(KEY_TERMS_PER_BLOCK);
 
-                    // grab stats!
-                    let df = val.docs.len() as u64;
-                    let cf = val.total_term_frequency;
-                    let docs_addr = docs_writer.tell();
-                    let pos_addr = pos_writer.as_ref().map(|w| w.tell()).unwrap_or_default();
-                    let skip_addr =
-                        write_docs_counts_skips(val, &mut docs_writer, pos_writer.as_mut())?;
-
-                    // now write actual key-data:
-                    // worst-case: 45 bytes.
-                    key_writer.write_v64(df)?;
-                    if val.counts.len() != 0 {
-                        key_writer.write_v64(cf)?;
+                while let Some(_first_id) = iter.next() {
+                    key_buffer.clear();
+                    for key in iter.keys() {
+                        key_buffer.push(key.0);
                     }
-                    key_writer.write_v64(docs_addr)?;
-                    // write skip-offset rather than absolute address for vbyte savings.
-                    key_writer.write_v64(skip_addr - docs_addr)?;
-                    if pos_writer.is_some() {
-                        key_writer.write_v64(pos_addr)?;
+                    let vals = iter.vals();
+
+                    if !is_contiguous(&key_buffer) {
+                        panic!("Need to implement sparse key-spaces!")
+                    }
+
+                    for (term_id, val) in key_buffer.iter().cloned().zip(vals) {
+                        key_writer.write_key(term_id)?;
+
+                        // grab stats!
+                        let df = val.docs.len() as u64;
+                        let cf = val.total_term_frequency;
+                        let docs_addr = docs_writer.tell();
+                        let pos_addr = pos_writer.as_ref().map(|w| w.tell()).unwrap_or_default();
+                        let skip_addr =
+                            write_docs_counts_skips(val, &mut docs_writer, pos_writer.as_mut())?;
+
+                        // now write actual key-data:
+                        // worst-case: 45 bytes.
+                        key_writer.write_v64(df)?;
+                        if val.counts.len() != 0 {
+                            key_writer.write_v64(cf)?;
+                        }
+                        key_writer.write_v64(docs_addr)?;
+                        // write skip-offset rather than absolute address for vbyte savings.
+                        key_writer.write_v64(skip_addr - docs_addr)?;
+                        if pos_writer.is_some() {
+                            key_writer.write_v64(pos_addr)?;
+                        }
                     }
                 }
                 key_writer.finish()?;
@@ -301,29 +331,41 @@ pub fn flush_direct_indexes(segment: u32, dir: &PathBuf, indexer: &Indexer) -> i
             FieldType::Textual(_, _) | FieldType::Categorical => {
                 let mut scratch = String::new();
                 println!("{:?}", contents.keys().collect::<Vec<_>>());
-                for (doc_id, val) in contents {
-                    println!("doc_id={}", doc_id.0);
-                    // begin key!
-                    key_writer.write_key(doc_id.0)?;
-                    // 0b001xxxxx (small value inline with keys!)
-                    println!("doc_id={}", doc_id.0);
-                    let data = val
-                        .as_str()
-                        .expect("data value expected for Textual/Categorical field");
 
-                    println!("doc_id={}", doc_id.0);
-                    if data.len() < 32 {
-                        let byte_len = data.len() as u8;
-                        key_writer.put(0b0010_0000u8 | byte_len)?;
-                        key_writer.write_bytes(&data.as_bytes())?;
-                    } else {
-                        key_writer.put(0x00)?;
-                        key_writer.write_v64(val_writer.tell())?;
-                        scratch.clear();
-                        scratch.push_str(data);
-                        lz4.write(&scratch, &mut val_writer)?;
+                let mut iter = BTreeMapChunkedIter::new(contents, KEY_TERMS_PER_BLOCK);
+                let mut key_buffer = Vec::with_capacity(KEY_TERMS_PER_BLOCK);
+
+                while let Some(_first_id) = iter.next() {
+                    key_buffer.clear();
+                    for key in iter.keys() {
+                        key_buffer.push(key.0);
                     }
-                    println!("doc_id={}", doc_id.0);
+                    let vals = iter.vals();
+
+                    if !is_contiguous(&key_buffer) {
+                        panic!("Need to implement sparse key-spaces!")
+                    }
+
+                    for (doc_id, val) in key_buffer.iter().cloned().zip(vals) {
+                        // begin key!
+                        key_writer.write_key(doc_id)?;
+                        // 0b001xxxxx (small value inline with keys!)
+                        let data = val
+                            .as_str()
+                            .expect("data value expected for Textual/Categorical field");
+
+                        if data.len() < 32 {
+                            let byte_len = data.len() as u8;
+                            key_writer.put(0b0010_0000u8 | byte_len)?;
+                            key_writer.write_bytes(&data.as_bytes())?;
+                        } else {
+                            key_writer.put(0x00)?;
+                            key_writer.write_v64(val_writer.tell())?;
+                            scratch.clear();
+                            scratch.push_str(data);
+                            lz4.write(&scratch, &mut val_writer)?;
+                        }
+                    }
                 }
             }
             // Small fields belong intermixed in the keys format.
