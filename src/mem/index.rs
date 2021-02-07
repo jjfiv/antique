@@ -337,6 +337,8 @@ pub fn is_contiguous(ids: &[u32]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use tempfile::TempDir;
+
     use crate::mem::{
         document::{DocFields, TokenizerStyle},
         flush_segment,
@@ -414,6 +416,7 @@ mod tests {
 
     #[test]
     fn index_sample_data() {
+        let mut tmpdir = TempDir::new().unwrap();
         let mut indexer = Indexer::default();
         let id_field =
             indexer.declare_field("id", FieldMetadata::new(FieldType::Categorical, true));
@@ -446,7 +449,7 @@ mod tests {
             )
         );
 
-        let path = Path::new(".").join("examine");
+        let path = tmpdir.path().to_path_buf();
         flush_segment(0, &path, &mut indexer).unwrap();
     }
 }
