@@ -191,7 +191,7 @@ impl U32KeyWriter {
 
         while self.skips.len() > 1 {
             let current_level: Vec<_> = self.skips.drain(..).collect();
-            println!("self.skips; current_level.len={}", current_level.len());
+            //println!("self.skips; current_level.len={}", current_level.len());
             for ptrs in current_level.chunks(LINK_BLOCK_SIZE) {
                 // build next, logarithmically smaller level of tree:
                 self.align(32);
