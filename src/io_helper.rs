@@ -15,15 +15,6 @@ pub fn open_mmap_file(path: &Path) -> Result<Arc<Mmap>, Error> {
     Ok(Arc::new(mmap))
 }
 
-pub(crate) trait Teller {
-    fn tell(&mut self) -> io::Result<u64>;
-}
-impl Teller for File {
-    fn tell(&mut self) -> io::Result<u64> {
-        self.seek(SeekFrom::Current(0))
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ValueEntry {
     pub(crate) source: Arc<Mmap>,

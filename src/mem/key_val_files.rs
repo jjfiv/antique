@@ -1,10 +1,10 @@
 use std::{
     fs::File,
-    io::{self, Write},
+    io::{self, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
-use crate::io_helper::Teller;
+use io::Seek;
 
 use super::{
     encoders::{write_vbyte, write_vbyte_u64},
@@ -71,7 +71,7 @@ impl CountingFileWriter {
     }
     pub fn new(file: File) -> io::Result<Self> {
         let mut output = file;
-        let written = output.tell()?;
+        let written = output.seek(SeekFrom::Current(0))?;
         Ok(Self {
             path: PathBuf::new(),
             output: Some(output),
@@ -86,6 +86,13 @@ impl CountingFileWriter {
             buffer: Vec::with_capacity(PAGE_4K),
             written: 0,
         })
+    }
+}
+
+impl Drop for CountingFileWriter {
+    fn drop(&mut self) {
+        self.flush()
+            .expect("CountingFileWriter.flush error in drop!");
     }
 }
 

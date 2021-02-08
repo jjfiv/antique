@@ -161,66 +161,73 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
+    use std::io::{self, Write};
 
-    use crate::io_helper::{self, DataInputStream, InputStream};
-    use io_helper::{ArcInputStream, Teller};
+    use crate::{
+        io_helper::{self, DataInputStream, InputStream},
+        mem::key_val_files::CountingFileWriter,
+    };
+    use io_helper::ArcInputStream;
     use tempfile::TempDir;
 
     use super::{Encoder, GalagoU32VByte, UTF8Encoder};
 
     #[test]
-    fn write_nums() {
-        let tmp_dir = TempDir::new().unwrap();
+    fn write_nums() -> Result<(), crate::Error> {
+        let tmp_dir = TempDir::new()?;
         let path = tmp_dir.path().join("write_nums.tmp");
         let mut offsets = Vec::new();
         {
-            let mut file = File::create(&path).unwrap();
+            let mut file = CountingFileWriter::create(&path)?;
             let mut writer = GalagoU32VByte;
 
             for i in 0..10000 {
-                writer.write(&i, &mut file).unwrap();
-                offsets.push(file.tell().unwrap());
+                writer.write(&i, &mut file)?;
+                offsets.push(file.tell());
             }
         }
 
-        let mmap = io_helper::open_mmap_file(&path).unwrap();
+        let mmap = io_helper::open_mmap_file(&path)?;
         let mut stream = ArcInputStream::from_mmap(mmap);
 
         for i in 0..10000 {
-            assert_eq!(i, stream.read_vbyte().unwrap());
+            assert_eq!(i, stream.read_vbyte()?);
             assert_eq!(stream.tell() as u64, offsets[i as usize]);
         }
         assert!(stream.eof());
+
+        Ok(())
     }
 
     #[test]
-    fn write_strs() {
+    fn write_strs() -> Result<(), crate::Error> {
         let tmp_dir = TempDir::new().unwrap();
         let path = tmp_dir.path().join("write_strs.tmp");
         let mut offsets = Vec::new();
         {
-            let mut file = File::create(&path).unwrap();
+            let mut file = CountingFileWriter::create(&path)?;
             let mut writer = UTF8Encoder;
 
             for i in 0..10000 {
-                writer.write(&format!("{:08x}", i), &mut file).unwrap();
-                offsets.push(file.tell().unwrap());
+                writer.write(&format!("{:08x}", i), &mut file)?;
+                offsets.push(file.tell());
             }
         }
 
-        let mmap = io_helper::open_mmap_file(&path).unwrap();
+        let mmap = io_helper::open_mmap_file(&path)?;
         let mut stream = ArcInputStream::from_mmap(mmap);
 
         for i in 0..10000 {
             let expected = format!("{:08x}", i);
-            assert_eq!(expected.len() as u64, stream.read_vbyte().unwrap());
+            assert_eq!(expected.len() as u64, stream.read_vbyte()?);
             assert_eq!(
                 expected,
-                String::from_utf8(stream.advance(8).unwrap().iter().cloned().collect()).unwrap()
+                String::from_utf8(stream.advance(8)?.iter().cloned().collect()).unwrap()
             );
             assert_eq!(stream.tell() as u64, offsets[i as usize]);
         }
         assert!(stream.eof());
+
+        Ok(())
     }
 }
