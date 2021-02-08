@@ -452,8 +452,8 @@ mod tests {
             )
         );
 
-        //let path = tmpdir.path().to_path_buf();
-        let path = Path::new("examine").to_path_buf();
+        let path = tmpdir.path().to_path_buf();
+        //let path = Path::new("examine").to_path_buf();
         flush_segment(0, &path, &mut indexer).unwrap();
     }
 }

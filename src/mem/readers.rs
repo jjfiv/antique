@@ -9,7 +9,7 @@ use crate::Error;
 
 use super::key_val_files::U32_KEY_WRITER_MAGIC;
 
-struct SkippedTreeReader {
+pub struct SkippedTreeReader {
     mmap: Arc<Mmap>,
     page_size: u32,
     total_keys: u32,
@@ -39,12 +39,10 @@ const FOOTER_SIZE: usize = 8 * 5;
 
 /// key, reader, offset -> use reader, offset specifically to find the value you care about!
 pub struct KeyRef<'a> {
-    /// The key that was queried.
-    key: u32,
     /// Reader, cued to the first value in key block.
-    reader: SliceInputStream<'a>,
+    pub reader: SliceInputStream<'a>,
     /// Index of desired value.
-    offset: u32,
+    pub offset: u32,
 }
 
 impl SkippedTreeReader {
@@ -71,36 +69,69 @@ impl SkippedTreeReader {
         })
     }
 
-    fn read_node_block(&self, addr: usize) -> Result<Vec<NodePointer<u32>>, Error> {
-        let mut pointers = Vec::new();
-        let mut stream = SliceInputStream::new(&self.mmap[addr..]);
-        let byte = stream.consume(1)?[0];
-        match byte {
-            DENSE_LEAF_BLOCK | SPARSE_LEAF_BLOCK | STR_LEAF_BLOCK => {
-                panic!("{} is LEAF_BLOCK?", addr)
+    pub fn decode_metadata<'a, D: serde::Deserialize<'a>>(&'a self) -> Result<D, Error> {
+        let reader = &self.mmap[self.metadata_addr..];
+        let mut reader = SliceInputStream::new(reader);
+        let length = reader.read_vbyte()? as usize;
+        let json = reader.consume(length)?;
+        Ok(serde_json::from_slice(json).expect("No SERDE errors..."))
+    }
+
+    pub fn find_key_bytes(&self, key: &[u8]) -> Result<Option<KeyRef>, Error> {
+        let mut current_block = self.root_addr;
+        let mut block_ptrs = Vec::with_capacity(64);
+
+        // Considering our B-Trees are B=128; 128**10 is an incredibly huge number.
+        for _ in 0..10 {
+            let mut block = SliceInputStream::new(&self.mmap[current_block..]);
+            let control = block.consume(1)?[0];
+            //println!("current_block={:?}, control={}", current_block, control);
+            match control {
+                DENSE_LEAF_BLOCK | SPARSE_LEAF_BLOCK => {
+                    todo!("Better error for STR key against u32 index.")
+                }
+                STR_LEAF_BLOCK => {
+                    todo!();
+                }
+                NODE_BLOCK => {
+                    block_ptrs.clear();
+
+                    // read block and buffer...
+                    let num_pointers = block.read_vbyte()? as u32;
+                    let mut found_addr = None;
+                    for _ in 0..num_pointers {
+                        let str_len = block.read_vbyte()? as usize;
+                        let id = block.consume(str_len)?;
+                        let addr = block.read_vbyte()? as usize;
+
+                        if key < id {
+                            found_addr = block_ptrs.last().cloned();
+                            break;
+                        } else if key == id {
+                            found_addr = Some(addr);
+                            break;
+                        }
+                        block_ptrs.push(addr);
+                    }
+                    if let Some(fa) = found_addr {
+                        current_block = fa;
+                    } else {
+                        current_block = *block_ptrs.last().unwrap();
+                    }
+                }
+                _ => panic!(
+                    "Corrupted block addr? Found control={} at {}, key={:?}",
+                    control, current_block, key
+                ),
             }
-            NODE_BLOCK => {}
-            _ => panic!("{} is neither NODE_BLOCK or LEAF_BLOCK. Corruption.", addr),
-        };
-        let num_pointers = stream.read_vbyte()? as u32;
-
-        for _ in 0..num_pointers {
-            let id = stream.read_vbyte()? as u32;
-            let addr = stream.read_vbyte()? as usize;
-            pointers.push(NodePointer {
-                id,
-                target_addr: addr,
-            })
         }
-
-        Ok(pointers)
+        panic!(
+            "Infinite loop in key search? key={:?}, current_block@{}",
+            key, current_block
+        )
     }
 
-    fn read_root_block(&self) -> Result<Vec<NodePointer<u32>>, Error> {
-        self.read_node_block(self.root_addr)
-    }
-
-    fn find_key_u32(&self, key: u32) -> Result<Option<KeyRef>, Error> {
+    pub fn find_key_u32(&self, key: u32) -> Result<Option<KeyRef>, Error> {
         let mut current_block = NodePointer {
             id: 0,
             target_addr: self.root_addr,
@@ -120,7 +151,6 @@ impl SkippedTreeReader {
                     let offset = key - first;
                     if offset < num_keys {
                         return Ok(Some(KeyRef {
-                            key,
                             reader: block,
                             offset,
                         }));
@@ -153,7 +183,6 @@ impl SkippedTreeReader {
                     }
                     if let Some(offset) = offset {
                         return Ok(Some(KeyRef {
-                            key,
                             reader: block,
                             offset,
                         }));
@@ -245,6 +274,8 @@ mod tests {
 
         let reader = SkippedTreeReader::open(&path).unwrap();
 
+        let m: u32 = reader.decode_metadata().unwrap();
+        assert_eq!(m, 42);
         assert_eq!(reader.total_keys, total_keys);
         assert_eq!(reader.page_size, page_size);
 
@@ -291,6 +322,8 @@ mod tests {
 
         let reader = SkippedTreeReader::open(&path).unwrap();
 
+        let m: u32 = reader.decode_metadata().unwrap();
+        assert_eq!(m, 42);
         assert_eq!(reader.total_keys, total_keys);
         assert_eq!(reader.page_size, page_size);
 
