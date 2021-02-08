@@ -144,7 +144,11 @@ impl SkippedTreeReader {
                         //println!("sparse-keys={} q={}, offset={:?}", current, key, offset);
                         if current == key {
                             offset = Some(i);
-                            // note; no break here because we must decode all keys.
+                        // note (in case we find it eventually)
+                        // no break here because we must decode all keys.
+                        } else if offset.is_none() && current > key {
+                            // can early-return if not found...
+                            return Ok(None);
                         }
                     }
                     if let Some(offset) = offset {
@@ -254,6 +258,8 @@ mod tests {
             let value = keyref.reader.read_vbyte().unwrap() as u32;
             assert_eq!(value, i * 3);
         }
+
+        assert!(reader.find_key_u32(33_333).expect("No I/O").is_none());
     }
 
     #[test]
@@ -299,6 +305,14 @@ mod tests {
             }
             let value = keyref.reader.read_vbyte().unwrap() as u32;
             assert_eq!(value, expected);
+        }
+        // check in the gaps!
+        for i in 0..10000u32 {
+            let coprime = i * 2;
+            if coprime % 7 == 0 {
+                continue;
+            }
+            assert!(reader.find_key_u32(coprime).expect("No I/O").is_none());
         }
     }
 }
